@@ -73,7 +73,8 @@ def init_db():
                 tipo_birra TEXT,
                 litri_mosto REAL,
                 grado_plato REAL,
-                lotto_sfuso TEXT
+                lotto_sfuso TEXT,
+                note_lievito TEXT DEFAULT ''
             )
         """)
     c.execute("""
@@ -103,6 +104,7 @@ def init_db():
     aggiungi_colonna_se_manca("materie_prime", "costo_kg_medio", "REAL DEFAULT 1.40")
     aggiungi_colonna_se_manca("birra_condizionata", "costo_produzione_litro", "REAL DEFAULT 1.10")
     aggiungi_colonna_se_manca("birra_condizionata", "grado_plato", "REAL DEFAULT 12.0")
+    aggiungi_colonna_se_manca("registro_mosto", "note_lievito", "TEXT DEFAULT ''")
 
 
 init_db()
@@ -296,14 +298,14 @@ st.divider()
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📥 Carico & Scarico XML",
     "🏷️ Imballaggi",
-    "⚗️️ Cotta (Mosto)",
+    "⚗️ Cotta (Mosto)",
     "📦 Confezionamento",
     "🚚 Vendita / Scarico Manuale",
     "🏛️ Giacenze Magazzino",
     "📑 Report 31/12 Commercialista",
 ])
 
-# TAB 1: XML INTELLIGENTE (ACQUISTI E VENDITE)
+# TAB 1: XML INTELLIGENTE
 with tab1:
   st.subheader("Carico & Scarico Automatico da Fatture Elettroniche (XML)")
   st.write(
@@ -332,7 +334,6 @@ with tab1:
           content = up_xml.read()
           root = ET.fromstring(content)
 
-          # Individua i nodi Cedente (venditore) e Cessionario (acquirente)
           cedente_node = None
           cessionario_node = None
           for el in root.iter():
@@ -346,7 +347,7 @@ with tab1:
           num_doc = trova_testo_nodo(root, ["Numero"]) or "N.D."
           data_doc = trova_testo_nodo(root, ["Data"]) or pd.Timestamp.now().strftime("%Y-%m-%d")
 
-          # --- CASO A: FATTURA EMESSA DA BIRRA NOBILE (VENDITA -> SCARICO BIRRA) ---
+          # VENDITA (BIRRA NOBILE)
           if PIVA_AZIENDA in piva_cedente or CF_AZIENDA in piva_cedente:
             cliente = ""
             if cessionario_node is not None:
@@ -380,7 +381,7 @@ with tab1:
                   tot_litri_scaricati += litri_riga
                   scarichi_vendite += 1
 
-          # --- CASO B: FATTURA FORNITORE (ACQUISTO -> CARICO MATERIE PRIME) ---
+          # ACQUISTO (FORNITORE)
           else:
             mittente = ""
             if cedente_node is not None:
@@ -486,39 +487,60 @@ with tab2:
     )
     st.dataframe(df_imb, width="stretch")
 
-# TAB 3: COTTA
+# TAB 3: COTTA CON SCELTA LIEVITO RECUPERATO O NUOVO
 with tab3:
   st.subheader("Registra Cotta e Scarica Materie Prime")
   with st.form("cotta_form"):
-    c_num = st.text_input("N° Cotta (es. C26-01)")
-    lotto = st.text_input("Lotto Sfuso")
-    stile = st.text_input("Stile Birra")
-    litri = st.number_input("Litri Mosto Ottenuti", min_value=0.0, step=10.0)
-    plato = st.number_input(
-        "Grado Plato Reale", min_value=0.0, step=0.1, value=12.0
-    )
-    m_usato = st.number_input("Kg Malto Usati", min_value=0.0, step=5.0)
-    l_usato = st.number_input("Kg Luppolo Usati", min_value=0.0, step=0.1)
-    if st.form_submit_button("Salva Cotta"):
+    col_c1, col_c2 = st.columns(2)
+    with col_c1:
+      c_num = st.text_input("N° Cotta (es. C26-01)")
+      lotto = st.text_input("Lotto Sfuso")
+      stile = st.text_input("Stile Birra (es. Blonde, APA, Pilsner, Dubbel)")
+    with col_c2:
+      litri = st.number_input("Litri Mosto Ottenuti", min_value=0.0, step=10.0, value=500.0)
+      plato = st.number_input("Grado Plato Reale", min_value=0.0, step=0.1, value=12.0)
+
+    st.write("---")
+    st.write("#### Materie Prime Utilizzate per la Cotta")
+    col_mp1, col_mp2 = st.columns(2)
+    with col_mp1:
+      m_usato = st.number_input("Kg Malto Macinato", min_value=0.0, step=5.0, value=100.0)
+      l_usato = st.number_input("Kg Luppolo Impiegato", min_value=0.0, step=0.05, value=1.00)
+
+    with col_mp2:
+      tipo_lievito = st.radio(
+          "Origine del Lievito:",
+          ["Lievito recuperato / Ripitching (NESSUNO scarico magazzino)", "Nuova confezione da fattura (SCARICA magazzino)"],
+      )
+      if "Nuova confezione" in tipo_lievito:
+        y_usato = st.number_input("Kg Lievito da Scaricare dallo Stock", min_value=0.0, step=0.1, value=0.5)
+        nota_lievito = f"Nuovo da fattura ({y_usato:.2f} kg)"
+      else:
+        y_usato = 0.0
+        nota_lievito = "Recuperato da cotta precedente (Ripitching)"
+
+    if st.form_submit_button("Salva Cotta e Scarica Magazzino"):
       oggi = pd.Timestamp.now().strftime("%Y-%m-%d")
       with sqlite3.connect(DB_FILE) as conn:
         c = conn.cursor()
         c.execute(
             """
-                    INSERT INTO registro_mosto (data, cotta_num, tipo_birra, litri_mosto, grado_plato, lotto_sfuso)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO registro_mosto (data, cotta_num, tipo_birra, litri_mosto, grado_plato, lotto_sfuso, note_lievito)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-            (oggi, c_num, stile, litri, plato, lotto),
+            (oggi, c_num, stile, litri, plato, lotto, nota_lievito),
         )
         c.execute(
             """
                     INSERT INTO materie_prime (tipo, data, riferimento, azienda, malto_kg, luppolo_kg, lievito_kg)
-                    VALUES ('SCARICO', ?, ?, 'COTTA PRODUZIONE', ?, ?, 0)
+                    VALUES ('SCARICO', ?, ?, 'COTTA PRODUZIONE', ?, ?, ?)
                 """,
-            (oggi, f"Cotta {c_num} - {lotto}", m_usato, l_usato),
+            (oggi, f"Cotta {c_num} - {lotto}", m_usato, l_usato, y_usato),
         )
         conn.commit()
-      st.success("Cotta salvata e materie prime scaricate!")
+
+      msg_lievito = "senza intaccare il magazzino lievito" if y_usato == 0.0 else f"scaricati {y_usato:.2f} kg di lievito"
+      st.success(f"Cotta salvata! Scaricati {m_usato:.1f} kg malto, {l_usato:.2f} kg luppolo ({msg_lievito}).")
       st.rerun()
 
 # TAB 4: CONFEZIONAMENTO
@@ -604,7 +626,7 @@ with tab5:
 
 # TAB 6: REGISTRI E MAGAZZINO
 with tab6:
-  st.subheader("🏛️ Situazione Prodotti Finiti a Magazzino")
+  st.subheader("🏛️️ Situazione Prodotti Finiti a Magazzino")
   with sqlite3.connect(DB_FILE) as conn:
     df_pf = pd.read_sql_query(
         """

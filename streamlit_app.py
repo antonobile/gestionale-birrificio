@@ -4,6 +4,7 @@ import sqlite3
 import xml.etree.ElementTree as ET
 import pandas as pd
 import streamlit as st
+from fpdf import FPDF
 
 st.set_page_config(
     page_title="Gestionale Birrificio Nobile", page_icon="🍺", layout="wide"
@@ -36,7 +37,6 @@ ALIQUOTA_ACCISA_PLATO = 1.794
 def init_db():
   with sqlite3.connect(DB_FILE) as conn:
     c = conn.cursor()
-    # 1. Materie Prime
     c.execute("""
             CREATE TABLE IF NOT EXISTS materie_prime (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,7 +50,6 @@ def init_db():
                 costo_kg_medio REAL DEFAULT 1.40
             )
         """)
-    # 2. Imballaggi
     c.execute("""
             CREATE TABLE IF NOT EXISTS imballaggi (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,7 +61,6 @@ def init_db():
                 costo_unitario REAL DEFAULT 0.0
             )
         """)
-    # 3. Registro Mosto
     c.execute("""
             CREATE TABLE IF NOT EXISTS registro_mosto (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,7 +72,6 @@ def init_db():
                 lotto_sfuso TEXT
             )
         """)
-    # 4. Birra Condizionata
     c.execute("""
             CREATE TABLE IF NOT EXISTS birra_condizionata (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,7 +88,6 @@ def init_db():
         """)
     conn.commit()
 
-    # Migrazione colonne se il DB esisteva già con schema precedente
     def aggiungi_colonna_se_manca(tabella, colonna, tipo_sql):
       c.execute(f"PRAGMA table_info({tabella})")
       colonne = [info[1] for info in c.fetchall()]
@@ -108,6 +104,83 @@ def init_db():
 init_db()
 
 
+def genera_pdf_commercialista(val_mp, val_imb, val_pf, tot_bilancio, malto, luppolo, lievito, litri_pf, costo_ind, accisa_pf):
+  pdf = FPDF(orientation="P", unit="mm", format="A4")
+  pdf.set_auto_page_break(auto=True, margin=15)
+  pdf.add_page()
+
+  # Intestazione
+  pdf.set_font("Helvetica", "B", 16)
+  pdf.cell(0, 10, "PROSPETTO RIMANENZE DI MAGAZZINO AL 31/12", ln=True, align="C")
+  pdf.set_font("Helvetica", "I", 10)
+  pdf.cell(0, 6, "Chiusura Esercizio Fiscale - Rilevazione Consistenze e Valutazioni", ln=True, align="C")
+  pdf.ln(8)
+
+  # Dati Aziendali
+  pdf.set_font("Helvetica", "B", 10)
+  pdf.cell(0, 5, "Attività: Fabbricazione di birra (Microbirrificio art. 35, c. 3-bis D.Lgs. 504/95)", ln=True)
+  pdf.set_font("Helvetica", "", 10)
+  pdf.cell(0, 5, "Destinatario: Studio Commerciale / Collegio Sindacale", ln=True)
+  pdf.ln(6)
+
+  # Linea separatore
+  pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+  pdf.ln(5)
+
+  # Sezione 1: Materie Prime
+  pdf.set_fill_color(240, 240, 240)
+  pdf.set_font("Helvetica", "B", 11)
+  pdf.cell(0, 7, "1. MATERIE PRIME IN GIACENZA", ln=True, fill=True)
+  pdf.set_font("Helvetica", "", 9)
+  pdf.multi_cell(0, 5, f"Consistenze fisiche: Malto amidaceo ({malto:.1f} kg), Luppoli ({luppolo:.2f} kg), Lieviti ({lievito:.2f} kg).\nCriterio: Valutate al costo effettivo di acquisto fatturato, al netto dell'IVA.")
+  pdf.set_font("Helvetica", "B", 10)
+  pdf.cell(140, 6, "Valore Fiscale Materie Prime al 31/12:")
+  pdf.cell(50, 6, f"EUR  {val_mp:,.2f}", align="R", ln=True)
+  pdf.ln(4)
+
+  # Sezione 2: Imballaggi
+  pdf.set_font("Helvetica", "B", 11)
+  pdf.cell(0, 7, "2. IMBALLAGGI IN GIACENZA", ln=True, fill=True)
+  pdf.set_font("Helvetica", "", 9)
+  pdf.multi_cell(0, 5, "Composizione: Scorte di bottiglie vuote (0.33L/0.75L), fusti vuoti, tappi a corona, scatole/cartoni ed etichette.\nCriterio: Valutati al costo medio di acquisto da fattura fornitore, al netto dell'IVA.")
+  pdf.set_font("Helvetica", "B", 10)
+  pdf.cell(140, 6, "Valore Fiscale Imballaggi al 31/12:")
+  pdf.cell(50, 6, f"EUR  {val_imb:,.2f}", align="R", ln=True)
+  pdf.ln(4)
+
+  # Sezione 3: Prodotti Finiti
+  pdf.set_font("Helvetica", "B", 11)
+  pdf.cell(0, 7, "3. PRODOTTI FINITI (Birra Confezionata)", ln=True, fill=True)
+  pdf.set_font("Helvetica", "", 9)
+  pdf.multi_cell(0, 5, f"Volume a magazzino: {litri_pf:.1f} Litri condizionati in fusti e bottiglie.\n- Quota Costo Industriale di Produzione: EUR {costo_ind:,.2f}\n- Quota Accisa Dovuta/Assolta liquidata alla produzione: EUR {accisa_pf:,.2f}")
+  pdf.set_font("Helvetica", "I", 8)
+  pdf.multi_cell(0, 4, "Nota per il bilancio: Ai sensi del D.Lgs. 504/95 e D.M. 138/2019 per i microbirrifici privi di deposito fiscale sospensivo, l'accisa e' liquidata all'immissione in consumo/condizionamento e costituisce costo accessorio certo incorporato nel valore delle giacenze.")
+  pdf.set_font("Helvetica", "B", 10)
+  pdf.cell(140, 6, "Valore Fiscale Prodotti Finiti al 31/12:")
+  pdf.cell(50, 6, f"EUR  {val_pf:,.2f}", align="R", ln=True)
+  pdf.ln(6)
+
+  # Box Totale Finale
+  pdf.set_draw_color(0, 0, 0)
+  pdf.set_fill_color(225, 235, 250)
+  pdf.rect(10, pdf.get_y(), 190, 16, "DF")
+  pdf.set_font("Helvetica", "B", 12)
+  pdf.set_xy(12, pdf.get_y() + 4)
+  pdf.cell(120, 8, "TOTALE RIMANENZE FINALI AL 31/12 (BILANCIO):")
+  pdf.cell(65, 8, f"EUR  {tot_bilancio:,.2f}", align="R", ln=True)
+  pdf.ln(15)
+
+  # Firme
+  pdf.set_font("Helvetica", "", 9)
+  pdf.cell(90, 5, "Data: 31/12/2026", ln=False)
+  pdf.cell(100, 5, "Firma del Titolare / Legale Rappresentante", align="R", ln=True)
+  pdf.ln(8)
+  pdf.cell(90, 5, "_______________________", ln=False)
+  pdf.cell(100, 5, "____________________________________", align="R", ln=True)
+
+  return bytes(pdf.output())
+
+
 def estrai_da_descrizione(desc: str, qta_pz: float):
   d = desc.upper()
   kg = 0.0
@@ -120,9 +193,7 @@ def estrai_da_descrizione(desc: str, qta_pz: float):
   else:
     kg = qta_pz
 
-  if any(
-      k in d for k in ["MALTO", "PILSNER", "WEYERMANN", "FRUMENTO", "ZUCCHERO"]
-  ):
+  if any(k in d for k in ["MALTO", "PILSNER", "WEYERMANN", "FRUMENTO", "ZUCCHERO"]):
     return ("MALTO", kg)
   if any(k in d for k in ["LUPPOLO", "T90", "MAGNUM", "PERLE", "MOSAIC"]):
     return ("LUPPOLO", kg)
@@ -161,19 +232,17 @@ with sqlite3.connect(DB_FILE) as conn:
   tot_confezioni = df_finiti[0] or 0
   tot_litri_finiti = df_finiti[1] or 0.0
 
-# --- METRICHE IN EVIDENZA ---
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Malto Residuo", f"{malto:.1f} kg")
 col2.metric("Luppolo Residuo", f"{luppolo:.2f} kg")
 col3.metric("Lievito Residuo", f"{lievito:.2f} kg")
-col4.metric("Birra Pronta a Magazzino", f"{tot_litri_finiti:.1f} LT")
+col4.metric("Birra a Magazzino", f"{tot_litri_finiti:.1f} LT")
 
 st.divider()
 
-# --- TABS ---
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📥 Carico XML / Acquisti",
-    "🏷️ Imballaggi",
+    "🏷️️ Imballaggi",
     "⚗️ Cotta (Mosto)",
     "📦 Confezionamento",
     "🚚 Vendita / Scarico",
@@ -181,7 +250,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📑 Report 31/12 Commercialista",
 ])
 
-# TAB 1: CARICO XML
+# TAB 1: XML
 with tab1:
   st.subheader("Carico Automatico da Fattura XML")
   up_xml = st.file_uploader("Trascina file XML fattura", type=["xml"])
@@ -198,25 +267,13 @@ with tab1:
         else root.find(".//DatiAnagraficiCedente//Cognome").text
     )
     dati_doc = root.find(".//DatiGeneraliDocumento")
-    num_doc = (
-        dati_doc.find("Numero").text if dati_doc.find("Numero") is not None else ""
-    )
-    data_doc = (
-        dati_doc.find("Data").text if dati_doc.find("Data") is not None else ""
-    )
+    num_doc = dati_doc.find("Numero").text if dati_doc.find("Numero") is not None else ""
+    data_doc = dati_doc.find("Data").text if dati_doc.find("Data") is not None else ""
 
     t_m, t_l, t_y = 0.0, 0.0, 0.0
     for linea in root.findall(".//DettaglioLinee"):
-      desc = (
-          linea.find("Descrizione").text
-          if linea.find("Descrizione") is not None
-          else ""
-      )
-      qta = (
-          float(linea.find("Quantita").text)
-          if linea.find("Quantita") is not None
-          else 0.0
-      )
+      desc = linea.find("Descrizione").text if linea.find("Descrizione") is not None else ""
+      qta = float(linea.find("Quantita").text) if linea.find("Quantita") is not None else 0.0
       tipo, p = estrai_da_descrizione(desc, qta)
       if tipo == "MALTO":
         t_m += p
@@ -235,10 +292,7 @@ with tab1:
           (data_doc, f"Fatt. {num_doc}", mittente, t_m, t_l, t_y, c_medio),
       )
       conn.commit()
-    st.success(
-        f"Registrato da {mittente}: {t_m} kg Malto, {t_l} kg Luppolo, {t_y} kg"
-        " Lievito."
-    )
+    st.success(f"Registrato da {mittente}: {t_m} kg Malto, {t_l} kg Luppolo, {t_y} kg Lievito.")
     st.rerun()
 
 # TAB 2: IMBALLAGGI
@@ -305,9 +359,7 @@ with tab3:
     lotto = st.text_input("Lotto Sfuso")
     stile = st.text_input("Stile Birra")
     litri = st.number_input("Litri Mosto Ottenuti", min_value=0.0, step=10.0)
-    plato = st.number_input(
-        "Grado Plato Reale", min_value=0.0, step=0.1, value=12.0
-    )
+    plato = st.number_input("Grado Plato Reale", min_value=0.0, step=0.1, value=12.0)
     m_usato = st.number_input("Kg Malto Usati", min_value=0.0, step=5.0)
     l_usato = st.number_input("Kg Luppolo Usati", min_value=0.0, step=0.1)
     if st.form_submit_button("Salva Cotta"):
@@ -341,9 +393,7 @@ with tab4:
         "Formato",
         ["Fusto 30L", "Fusto 20L", "Bottiglia 0.33L", "Bottiglia 0.75L"],
     )
-    plato_c = st.number_input(
-        "Grado Plato Reale", min_value=0.0, step=0.1, value=12.0
-    )
+    plato_c = st.number_input("Grado Plato Reale", min_value=0.0, step=0.1, value=12.0)
     qta_c = st.number_input("Pezzi Prodotti", min_value=1, step=1)
     costo_prod_lt = st.number_input(
         "Mero Costo Industriale Produzione (€/Litro)",
@@ -353,15 +403,7 @@ with tab4:
     )
     if st.form_submit_button("Carica a Prodotti Finiti"):
       oggi = pd.Timestamp.now().strftime("%Y-%m-%d")
-      l_un = (
-          30.0
-          if "30L" in fmt
-          else (
-              20.0
-              if "20L" in fmt
-              else (0.33 if "0.33L" in fmt else 0.75)
-          )
-      )
+      l_un = 30.0 if "30L" in fmt else (20.0 if "20L" in fmt else (0.33 if "0.33L" in fmt else 0.75))
       litri_tot = qta_c * l_un
 
       with sqlite3.connect(DB_FILE) as conn:
@@ -371,46 +413,17 @@ with tab4:
                     INSERT INTO birra_condizionata (tipo, data, lotto, formato, quantita, litri_totali, grado_plato, costo_produzione_litro, documento_rif)
                     VALUES ('CARICO', ?, ?, ?, ?, ?, ?, ?, 'CONFEZIONAMENTO')
                 """,
-            (
-                oggi,
-                lotto_c,
-                fmt,
-                qta_c,
-                litri_tot,
-                plato_c,
-                costo_prod_lt,
-            ),
+            (oggi, lotto_c, fmt, qta_c, litri_tot, plato_c, costo_prod_lt),
         )
 
         if "Bottiglia" in fmt:
-          art_bot = (
-              "Bottiglie 0.33L vuote"
-              if "0.33L" in fmt
-              else "Bottiglie 0.75L vuote"
-          )
-          c.execute(
-              "INSERT INTO imballaggi (tipo_movimento, data, riferimento,"
-              " articolo, quantita) VALUES ('SCARICO', ?, ?, ?, ?)",
-              (oggi, f"Lotto {lotto_c}", art_bot, qta_c),
-          )
-          c.execute(
-              "INSERT INTO imballaggi (tipo_movimento, data, riferimento,"
-              " articolo, quantita) VALUES ('SCARICO', ?, ?, 'Tappi a corona',"
-              " ?)",
-              (oggi, f"Lotto {lotto_c}", qta_c),
-          )
-          c.execute(
-              "INSERT INTO imballaggi (tipo_movimento, data, riferimento,"
-              " articolo, quantita) VALUES ('SCARICO', ?, ?, 'Etichette', ?)",
-              (oggi, f"Lotto {lotto_c}", qta_c),
-          )
+          art_bot = "Bottiglie 0.33L vuote" if "0.33L" in fmt else "Bottiglie 0.75L vuote"
+          c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', ?, ?, ?, ?)", (oggi, f"Lotto {lotto_c}", art_bot, qta_c))
+          c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', ?, ?, 'Tappi a corona', ?)", (oggi, f"Lotto {lotto_c}", qta_c))
+          c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', ?, ?, 'Etichette', ?)", (oggi, f"Lotto {lotto_c}", qta_c))
         elif "Fusto" in fmt:
           art_fusto = "Fusti vuoti 30L" if "30L" in fmt else "Fusti vuoti 20L"
-          c.execute(
-              "INSERT INTO imballaggi (tipo_movimento, data, riferimento,"
-              " articolo, quantita) VALUES ('SCARICO', ?, ?, ?, ?)",
-              (oggi, f"Lotto {lotto_c}", art_fusto, qta_c),
-          )
+          c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', ?, ?, ?, ?)", (oggi, f"Lotto {lotto_c}", art_fusto, qta_c))
 
         conn.commit()
       st.success("Birra caricata e imballaggi scalati!")
@@ -428,15 +441,7 @@ with tab5:
     qta_v = st.number_input("Quantità Venduta", min_value=1, step=1)
     if st.form_submit_button("Scarica da Magazzino"):
       oggi = pd.Timestamp.now().strftime("%Y-%m-%d")
-      l_un = (
-          30.0
-          if "30L" in fmt_v
-          else (
-              20.0
-              if "20L" in fmt_v
-              else (0.33 if "0.33L" in fmt_v else 0.75)
-          )
-      )
+      l_un = 30.0 if "30L" in fmt_v else (20.0 if "20L" in fmt_v else (0.33 if "0.33L" in fmt_v else 0.75))
       with sqlite3.connect(DB_FILE) as conn:
         c = conn.cursor()
         c.execute(
@@ -469,18 +474,12 @@ with tab6:
 
     st.write("---")
     st.write("#### Registro Mosto (Allegato I)")
-    st.dataframe(
-        pd.read_sql_query("SELECT * FROM registro_mosto", conn),
-        width="stretch",
-    )
+    st.dataframe(pd.read_sql_query("SELECT * FROM registro_mosto", conn), width="stretch")
 
     st.write("#### Registro Birra Condizionata (Allegato III)")
-    st.dataframe(
-        pd.read_sql_query("SELECT * FROM birra_condizionata", conn),
-        width="stretch",
-    )
+    st.dataframe(pd.read_sql_query("SELECT * FROM birra_condizionata", conn), width="stretch")
 
-# TAB 7: REPORT 31/12 COMMERCIALISTA
+# TAB 7: REPORT 31/12
 with tab7:
   st.subheader("📑 Riepilogo Ufficiale al 31 Dicembre per Commercialista")
 
@@ -492,7 +491,6 @@ with tab7:
 
   with sqlite3.connect(DB_FILE) as conn:
     c = conn.cursor()
-    # Calcolo totale imballaggi
     c.execute("""
             SELECT SUM(giacenza * costo) FROM (
                 SELECT SUM(CASE WHEN tipo_movimento='CARICO' THEN quantita ELSE -quantita END) as giacenza,
@@ -503,7 +501,6 @@ with tab7:
         """)
     valore_tot_imb = c.fetchone()[0] or 0.0
 
-    # Calcolo prodotti finiti: (Litri * costo_produzione) + Accisa assolta (Litri * Plato / 100 * 1.794)
     c.execute("""
             SELECT 
                 SUM(CASE WHEN tipo='CARICO' THEN litri_totali ELSE -litri_totali END),
@@ -536,51 +533,23 @@ with tab7:
     ### 💰 **TOTALE RIMANENZE FINALI DI BILANCIO AL 31/12: € {totale_bilancio_complessivo:,.2f}**
     """)
 
-  dati_export = [
-      {
-          "Macro-Voce": "MATERIE PRIME",
-          "Dettaglio": "Malti, Luppoli, Lieviti a magazzino",
-          "Criterio Valutazione": "Costo di acquisto escluso IVA",
-          "Valore (€)": round(valore_tot_mp, 2),
-          "Note di Bilancio": "Giacenze fisiche non utilizzate al 31/12",
-      },
-      {
-          "Macro-Voce": "IMBALLAGGI",
-          "Dettaglio": "Bottiglie vuote, fusti, tappi, scatole, etichette",
-          "Criterio Valutazione": "Costo di acquisto escluso IVA",
-          "Valore (€)": round(valore_tot_imb, 2),
-          "Note di Bilancio": "Scorte imballaggi al 31/12",
-      },
-      {
-          "Macro-Voce": "PRODOTTI FINITI",
-          "Dettaglio": f"Birra confezionata ({litri_rimasti_pf:.1f} Litri)",
-          "Criterio Valutazione": (
-              f"Costo industriale (€{costo_ind_pf:.2f}) + Accisa assolta"
-              f" (€{accisa_assolta_pf:.2f})"
-          ),
-          "Valore (€)": round(valore_tot_pf, 2),
-          "Note di Bilancio": (
-              "Comprensivo di costo industriale e accisa già assolta/liquidata"
-              " (merce non in sospensione)"
-          ),
-      },
-      {
-          "Macro-Voce": "TOTALE BILANCIO",
-          "Dettaglio": "Somma rimanenze finali al 31/12",
-          "Criterio Valutazione": "Totale civilistico e fiscale",
-          "Valore (€)": round(totale_bilancio_complessivo, 2),
-          "Note di Bilancio": "Valore da iscrivere a bilancio di chiusura",
-      },
-  ]
+  # Generazione PDF
+  pdf_bytes = genera_pdf_commercialista(
+      valore_tot_mp,
+      valore_tot_imb,
+      valore_tot_pf,
+      totale_bilancio_complessivo,
+      malto,
+      luppolo,
+      lievito,
+      litri_rimasti_pf,
+      costo_ind_pf,
+      accisa_assolta_pf,
+  )
 
-  df_exp = pd.DataFrame(dati_export)
-  st.dataframe(df_exp, width="stretch")
-
-  csv_out = io.StringIO()
-  df_exp.to_csv(csv_out, index=False)
   st.download_button(
-      label="📥 SCARICA PROSPETTO 31/12 PER IL COMMERCIALISTA (CSV)",
-      data=csv_out.getvalue().encode("utf-8"),
-      file_name="Prospetto_Rimanenze_31_12_Commercialista.csv",
-      mime="text/csv",
+      label="📄 SCARICA REPORT UFFICIALE 31/12 (PDF PER COMMERCIALISTA)",
+      data=pdf_bytes,
+      file_name="Prospetto_Rimanenze_31_12_Commercialista.pdf",
+      mime="application/pdf",
   )

@@ -144,21 +144,30 @@ def estrai_da_descrizione(desc: str, qta_pz: float):
 
 def estrai_birra_da_vendita(desc: str):
   d = desc.upper()
-  if any(k in d for k in ["CAUZIONE", "TRASPORTO", "SPESE", "BICCHIER", "TEKU", "SPEDIZIONE"]):
+  # Ignora cauzioni e accessori
+  if any(k in d for k in ["CAUZIONE", "TRASPORTO", "SPESE", "BICCHIER", "TEKU", "SPEDIZIONE", "NOLEGGIO"]):
     return None
 
-  if "30" in d and ("LT" in d or "LITRI" in d or "FUST" in d):
+  # Ricerca Fusti
+  if "30" in d and ("LT" in d or "LITR" in d or "FUST" in d or "POLYKEG" in d or "DOLIUM" in d):
     return ("Fusto 30L", 30.0)
-  if "20" in d and ("LT" in d or "LITRI" in d or "FUST" in d):
+  if "20" in d and ("LT" in d or "LITR" in d or "FUST" in d or "POLYKEG" in d or "DOLIUM" in d):
     return ("Fusto 20L", 20.0)
-  if "0.33" in d or "33" in d or "33CL" in d:
-    return ("Bottiglia 0.33L", 0.33)
-  if "0.75" in d or "75" in d or "75CL" in d:
-    return ("Bottiglia 0.75L", 0.75)
   if "FUST" in d:
     return ("Fusto 30L", 30.0)
+
+  # Ricerca Bottiglie
+  if "0.33" in d or "33CL" in d or "33 CL" in d or "0,33" in d or "33" in d:
+    return ("Bottiglia 0.33L", 0.33)
+  if "0.75" in d or "75CL" in d or "75 CL" in d or "0,75" in d or "75" in d:
+    return ("Bottiglia 0.75L", 0.75)
   if "BOTT" in d:
     return ("Bottiglia 0.33L", 0.33)
+
+  # Se è presente genericamente "BIRRA"
+  if "BIRRA" in d:
+    return ("Bottiglia 0.33L", 0.33)
+
   return None
 
 
@@ -179,7 +188,7 @@ def genera_pdf_commercialista(val_mp, val_imb, val_pf, tot_bilancio, malto, lupp
 
   pdf.set_font("Helvetica", "B", 9)
   pdf.set_x(15)
-  pdf.cell(130, 5, "Attivita': BIRRA NOBILE DI LUIGI NOBILE - P.IVA: 01822710628", ln=0)
+  pdf.cell(130, 5, "Attività: BIRRA NOBILE DI LUIGI NOBILE - P.IVA: 01822710628", ln=0)
   pdf.set_font("Helvetica", "", 9)
   pdf.cell(137, 5, "Destinatario: Studio Commerciale", align="R", ln=1)
 
@@ -296,36 +305,33 @@ col4.metric("Birra a Magazzino", f"{tot_litri_finiti:.1f} LT")
 st.divider()
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "📥 Carico & Scarico XML",
+    "📥 Carico Acquisti XML",
     "🏷️ Imballaggi",
     "⚗️ Cotta (Mosto)",
     "📦 Confezionamento",
-    "🚚 Vendita / Scarico Manuale",
+    "🚚 Vendite (XML & Manuale)",
     "🏛️ Giacenze Magazzino",
     "📑 Report 31/12 Commercialista",
 ])
 
-# TAB 1: XML INTELLIGENTE
+# TAB 1: CARICO ACQUISTI FORNITORI XML
 with tab1:
-  st.subheader("Carico & Scarico Automatico da Fatture Elettroniche (XML)")
-  st.write(
-      "Trascina qui tutti i file XML insieme: il sistema riconosce in autonomia le **Fatture di Vendita** (scarica fusti/bottiglie) e le **Fatture Fornitori** (carica materie prime)."
-  )
+  st.subheader("Carico Automatico Materie Prime da Fatture XML Fornitori")
+  st.write("Trascina qui le fatture XML ricevute dai fornitori di malto, luppolo e lievito.")
 
   up_xmls = st.file_uploader(
-      "Seleziona o trascina uno o più file XML",
+      "Seleziona i file XML fornitori",
       type=["xml"],
       accept_multiple_files=True,
+      key="xml_acquisti",
   )
   c_medio = st.number_input(
       "Costo medio acquisto stimato materie prime (€/kg)", value=1.40, step=0.1
   )
 
-  if up_xmls and st.button("Elabora Tutte le Fatture"):
+  if up_xmls and st.button("Elabora Fatture Acquisto"):
     carichi_mp = 0
-    scarichi_vendite = 0
     tot_m, tot_l, tot_y = 0.0, 0.0, 0.0
-    tot_litri_scaricati = 0.0
 
     with sqlite3.connect(DB_FILE) as conn:
       c = conn.cursor()
@@ -335,100 +341,56 @@ with tab1:
           root = ET.fromstring(content)
 
           cedente_node = None
-          cessionario_node = None
           for el in root.iter():
             tag_p = el.tag.split("}")[-1] if "}" in el.tag else el.tag
             if tag_p == "DatiAnagraficiCedente":
               cedente_node = el
-            elif tag_p == "DatiAnagraficiCessionario":
-              cessionario_node = el
+              break
 
-          piva_cedente = trova_testo_nodo(cedente_node, ["IdCodice", "CodiceFiscale"])
+          mittente = ""
+          if cedente_node is not None:
+            denominazione = trova_testo_nodo(cedente_node, ["Denominazione"])
+            cognome = trova_testo_nodo(cedente_node, ["Cognome"])
+            nome = trova_testo_nodo(cedente_node, ["Nome"])
+            mittente = denominazione if denominazione else f"{cognome} {nome}".strip()
+          if not mittente:
+            mittente = up_xml.name
+
           num_doc = trova_testo_nodo(root, ["Numero"]) or "N.D."
           data_doc = trova_testo_nodo(root, ["Data"]) or pd.Timestamp.now().strftime("%Y-%m-%d")
 
-          # VENDITA (BIRRA NOBILE)
-          if PIVA_AZIENDA in piva_cedente or CF_AZIENDA in piva_cedente:
-            cliente = ""
-            if cessionario_node is not None:
-              den_c = trova_testo_nodo(cessionario_node, ["Denominazione"])
-              cog_c = trova_testo_nodo(cessionario_node, ["Cognome"])
-              nom_c = trova_testo_nodo(cessionario_node, ["Nome"])
-              cliente = den_c if den_c else f"{cog_c} {nom_c}".strip()
-            if not cliente:
-              cliente = "Cliente Fattura"
+          t_m, t_l, t_y = 0.0, 0.0, 0.0
+          for el in root.iter():
+            tag_linea = el.tag.split("}")[-1] if "}" in el.tag else el.tag
+            if tag_linea == "DettaglioLinee":
+              desc = trova_testo_nodo(el, ["Descrizione"])
+              qta_str = trova_testo_nodo(el, ["Quantita"])
+              qta = float(qta_str.replace(",", ".")) if qta_str else 0.0
 
-            for el in root.iter():
-              tag_linea = el.tag.split("}")[-1] if "}" in el.tag else el.tag
-              if tag_linea == "DettaglioLinee":
-                desc = trova_testo_nodo(el, ["Descrizione"])
-                qta_str = trova_testo_nodo(el, ["Quantita"])
-                qta = int(float(qta_str.replace(",", "."))) if qta_str else 1
-                prezzo_str = trova_testo_nodo(el, ["PrezzoUnitario"])
-                prezzo_un = float(prezzo_str.replace(",", ".")) if prezzo_str else 0.0
+              tipo, p = estrai_da_descrizione(desc, qta)
+              if tipo == "MALTO":
+                t_m += p
+              elif tipo == "LUPPOLO":
+                t_l += p
+              elif tipo == "LIEVITO":
+                t_y += p
 
-                info_birra = estrai_birra_da_vendita(desc)
-                if info_birra:
-                  formato_v, litri_un = info_birra
-                  litri_riga = qta * litri_un
-                  c.execute(
-                      """
-                            INSERT INTO birra_condizionata (tipo, data, lotto, formato, quantita, litri_totali, costo_produzione_litro, documento_rif)
-                            VALUES ('SCARICO', ?, '-', ?, ?, ?, ?, ?)
-                        """,
-                      (data_doc, formato_v, qta, litri_riga, prezzo_un, f"Fatt. {num_doc} - {cliente}"),
-                  )
-                  tot_litri_scaricati += litri_riga
-                  scarichi_vendite += 1
-
-          # ACQUISTO (FORNITORE)
-          else:
-            mittente = ""
-            if cedente_node is not None:
-              denominazione = trova_testo_nodo(cedente_node, ["Denominazione"])
-              cognome = trova_testo_nodo(cedente_node, ["Cognome"])
-              nome = trova_testo_nodo(cedente_node, ["Nome"])
-              mittente = denominazione if denominazione else f"{cognome} {nome}".strip()
-            if not mittente:
-              mittente = f"Fornitore {piva_cedente}" if piva_cedente else up_xml.name
-
-            t_m, t_l, t_y = 0.0, 0.0, 0.0
-            for el in root.iter():
-              tag_linea = el.tag.split("}")[-1] if "}" in el.tag else el.tag
-              if tag_linea == "DettaglioLinee":
-                desc = trova_testo_nodo(el, ["Descrizione"])
-                qta_str = trova_testo_nodo(el, ["Quantita"])
-                qta = float(qta_str.replace(",", ".")) if qta_str else 0.0
-
-                tipo, p = estrai_da_descrizione(desc, qta)
-                if tipo == "MALTO":
-                  t_m += p
-                elif tipo == "LUPPOLO":
-                  t_l += p
-                elif tipo == "LIEVITO":
-                  t_y += p
-
-            c.execute(
-                """
+          c.execute(
+              """
                     INSERT INTO materie_prime (tipo, data, riferimento, azienda, malto_kg, luppolo_kg, lievito_kg, costo_kg_medio)
                     VALUES ('CARICO', ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (data_doc, f"Fatt. {num_doc}", mittente, t_m, t_l, t_y, c_medio),
-            )
-            carichi_mp += 1
-            tot_m += t_m
-            tot_l += t_l
-            tot_y += t_y
-
+              (data_doc, f"Fatt. {num_doc}", mittente, t_m, t_l, t_y, c_medio),
+          )
+          carichi_mp += 1
+          tot_m += t_m
+          tot_l += t_l
+          tot_y += t_y
           conn.commit()
         except Exception as e:
-          st.error(f"Errore nella lettura del file {up_xml.name}: {e}")
+          st.error(f"Errore su {up_xml.name}: {e}")
 
-    st.success(
-        f"✅ Operazione completata! "
-        f"Acquisti elaborati: {carichi_mp} fatture (+{tot_m:.1f} kg Malto, +{tot_l:.2f} kg Luppolo, +{tot_y:.2f} kg Lievito). "
-        f"Vendite registrate: {scarichi_vendite} scarichi (-{tot_litri_scaricati:.1f} Litri di birra dal deposito)."
-    )
+    st.success(f"Caricate {carichi_mp} fatture: +{tot_m:.1f} kg Malto, +{tot_l:.2f} kg Luppolo, +{tot_y:.2f} kg Lievito.")
     st.rerun()
 
 # TAB 2: IMBALLAGGI
@@ -487,7 +449,7 @@ with tab2:
     )
     st.dataframe(df_imb, width="stretch")
 
-# TAB 3: COTTA CON SCELTA LIEVITO RECUPERATO O NUOVO
+# TAB 3: COTTA CON OPZIONE LIEVITO
 with tab3:
   st.subheader("Registra Cotta e Scarica Materie Prime")
   with st.form("cotta_form"):
@@ -598,17 +560,108 @@ with tab4:
       st.success("Birra caricata e imballaggi scalati!")
       st.rerun()
 
-# TAB 5: VENDITA MANUALE
+# TAB 5: VENDITE (CARICAMENTO XML EMESSE + INSERIMENTO MANUALE)
 with tab5:
-  st.subheader("Scarico Vendite Manuale (senza XML)")
-  with st.form("vendita_form"):
+  st.subheader("🚚 Scarico Vendite Birra")
+
+  # SEZIONE A: CARICA FATTURE EMESSE XML
+  st.markdown("### 📥 1. Carica Fatture di Vendita Elettroniche (XML)")
+  st.write("Trascina qui le fatture XML emesse da Birra Nobile verso clienti, pub o distributori per scaricare in automatico fusti e bottiglie.")
+
+  up_vendite_xml = st.file_uploader(
+      "Trascina qui uno o più XML delle fatture emesse",
+      type=["xml"],
+      accept_multiple_files=True,
+      key="xml_vendite",
+  )
+
+  if up_vendite_xml and st.button("Elabora e Scarica Fatture Emesse"):
+    tot_scarichi = 0
+    tot_litri = 0.0
+    righe_elaborate = []
+
+    with sqlite3.connect(DB_FILE) as conn:
+      c = conn.cursor()
+      for up_xml in up_vendite_xml:
+        try:
+          content = up_xml.read()
+          root = ET.fromstring(content)
+
+          cessionario_node = None
+          for el in root.iter():
+            tag_p = el.tag.split("}")[-1] if "}" in el.tag else el.tag
+            if tag_p == "DatiAnagraficiCessionario":
+              cessionario_node = el
+              break
+
+          cliente = ""
+          if cessionario_node is not None:
+            den_c = trova_testo_nodo(cessionario_node, ["Denominazione"])
+            cog_c = trova_testo_nodo(cessionario_node, ["Cognome"])
+            nom_c = trova_testo_nodo(cessionario_node, ["Nome"])
+            cliente = den_c if den_c else f"{cog_c} {nom_c}".strip()
+          if not cliente:
+            cliente = "Cliente"
+
+          num_doc = trova_testo_nodo(root, ["Numero"]) or "N.D."
+          data_doc = trova_testo_nodo(root, ["Data"]) or pd.Timestamp.now().strftime("%Y-%m-%d")
+
+          for el in root.iter():
+            tag_linea = el.tag.split("}")[-1] if "}" in el.tag else el.tag
+            if tag_linea == "DettaglioLinee":
+              desc = trova_testo_nodo(el, ["Descrizione"])
+              qta_str = trova_testo_nodo(el, ["Quantita"])
+              qta = int(float(qta_str.replace(",", "."))) if qta_str else 1
+              prezzo_str = trova_testo_nodo(el, ["PrezzoUnitario"])
+              prezzo_un = float(prezzo_str.replace(",", ".")) if prezzo_str else 0.0
+
+              info_birra = estrai_birra_da_vendita(desc)
+              if info_birra:
+                formato_v, litri_un = info_birra
+                litri_riga = qta * litri_un
+                rif_vendita = f"Fatt. {num_doc} - {cliente}"
+
+                c.execute(
+                    """
+                          INSERT INTO birra_condizionata (tipo, data, lotto, formato, quantita, litri_totali, costo_produzione_litro, documento_rif)
+                          VALUES ('SCARICO', ?, '-', ?, ?, ?, ?, ?)
+                      """,
+                    (data_doc, formato_v, qta, litri_riga, prezzo_un, rif_vendita),
+                )
+                tot_scarichi += 1
+                tot_litri += litri_riga
+                righe_elaborate.append({
+                    "Data": data_doc,
+                    "Riferimento": rif_vendita,
+                    "Articolo": desc,
+                    "Formato Riconosciuto": formato_v,
+                    "Quantità (pz)": qta,
+                    "Litri Scaricati": litri_riga,
+                })
+
+          conn.commit()
+        except Exception as e:
+          st.error(f"Errore su {up_xml.name}: {e}")
+
+    if righe_elaborate:
+      st.success(f"Registrati con successo {tot_scarichi} scarichi per complessivi {tot_litri:.1f} Litri venduti!")
+      st.dataframe(pd.DataFrame(righe_elaborate), width="stretch")
+      st.rerun()
+    else:
+      st.warning("Nessuna riga di birra riconosciuta nei file XML caricati. Controlla le descrizioni delle fatture.")
+
+  st.write("---")
+
+  # SEZIONE B: INSERIMENTO MANUALE
+  st.markdown("### ✍️ 2. Scarico Vendita Manuale (Senza Fattura XML)")
+  with st.form("vendita_manuale_form"):
     doc_v = st.text_input("Rif. Fattura / DDT / Cliente")
     fmt_v = st.selectbox(
         "Formato Venduto",
         ["Fusto 30L", "Fusto 20L", "Bottiglia 0.33L", "Bottiglia 0.75L"],
     )
     qta_v = st.number_input("Quantità Venduta", min_value=1, step=1)
-    if st.form_submit_button("Scarica da Magazzino"):
+    if st.form_submit_button("Registra Scarico Manuale"):
       oggi = pd.Timestamp.now().strftime("%Y-%m-%d")
       l_un = 30.0 if "30L" in fmt_v else (20.0 if "20L" in fmt_v else (0.33 if "0.33L" in fmt_v else 0.75))
       with sqlite3.connect(DB_FILE) as conn:
@@ -621,12 +674,12 @@ with tab5:
             (oggi, fmt_v, qta_v, qta_v * l_un, doc_v),
         )
         conn.commit()
-      st.success("Vendita registrata!")
+      st.success("Scarico vendita registrato!")
       st.rerun()
 
 # TAB 6: REGISTRI E MAGAZZINO
 with tab6:
-  st.subheader("🏛️️ Situazione Prodotti Finiti a Magazzino")
+  st.subheader("🏛️ Situazione Prodotti Finiti a Magazzino")
   with sqlite3.connect(DB_FILE) as conn:
     df_pf = pd.read_sql_query(
         """

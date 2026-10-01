@@ -31,6 +31,9 @@ if not st.session_state["autenticato"]:
 # --- DATABASE SETUP ---
 DB_FILE = "birrificio.db"
 
+# Aliquota accisa microbirrifici (40% riduzione: 1.794 € per ettolitro/Plato)
+ALIQUOTA_ACCISA_PLATO = 1.794
+
 
 def init_db():
   with sqlite3.connect(DB_FILE) as conn:
@@ -45,10 +48,11 @@ def init_db():
                 azienda TEXT,
                 malto_kg REAL DEFAULT 0,
                 luppolo_kg REAL DEFAULT 0,
-                lievito_kg REAL DEFAULT 0
+                lievito_kg REAL DEFAULT 0,
+                costo_kg_medio REAL DEFAULT 1.40
             )
         """)
-    # 2. Imballaggi (Tappi, Etichette, Bottiglie vuote, Scatole, Fusti vuoti)
+    # 2. Imballaggi
     c.execute("""
             CREATE TABLE IF NOT EXISTS imballaggi (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,10 +60,11 @@ def init_db():
                 data TEXT,
                 riferimento TEXT,
                 articolo TEXT,
-                quantita INTEGER DEFAULT 0
+                quantita INTEGER DEFAULT 0,
+                costo_unitario REAL DEFAULT 0.0
             )
         """)
-    # 3. Registro Mosto (Allegato I)
+    # 3. Registro Mosto
     c.execute("""
             CREATE TABLE IF NOT EXISTS registro_mosto (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,7 +76,7 @@ def init_db():
                 lotto_sfuso TEXT
             )
         """)
-    # 4. Birra Condizionata / Deposito Fiscale (Allegato III)
+    # 4. Birra Condizionata / Prodotti Finiti
     c.execute("""
             CREATE TABLE IF NOT EXISTS birra_condizionata (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,7 +87,7 @@ def init_db():
                 quantita INTEGER,
                 litri_totali REAL,
                 grado_plato REAL DEFAULT 12.0,
-                valore_unitario REAL DEFAULT 0.0,
+                costo_produzione_litro REAL DEFAULT 1.20,
                 documento_rif TEXT
             )
         """)
@@ -92,7 +97,6 @@ def init_db():
 init_db()
 
 
-# --- LOGICA DI RICONOSCIMENTO FATTURE ---
 def estrai_da_descrizione(desc: str, qta_pz: float):
   d = desc.upper()
   kg = 0.0
@@ -116,12 +120,11 @@ def estrai_da_descrizione(desc: str, qta_pz: float):
   return ("ALTRO", 0.0)
 
 
-st.title("🍺 Gestionale & Registri Fiscali Birrificio")
+st.title("🍺 Gestionale Birrificio & Registri Fiscali")
 
-# --- QUERY DI RIEPILOGO GIACENZE ---
+# --- QUERY DI RIEPILOGO ---
 with sqlite3.connect(DB_FILE) as conn:
   c = conn.cursor()
-  # Materie Prime
   c.execute("""
         SELECT 
             SUM(CASE WHEN tipo='CARICO' THEN malto_kg ELSE -malto_kg END),
@@ -134,54 +137,47 @@ with sqlite3.connect(DB_FILE) as conn:
   luppolo = mp[1] or 0.0
   lievito = mp[2] or 0.0
 
-  # Mosto
   c.execute("SELECT SUM(litri_mosto) FROM registro_mosto")
   mosto = c.fetchone()[0] or 0.0
 
-  # Deposito Fiscale Birra
   c.execute("""
         SELECT 
             SUM(CASE WHEN tipo='CARICO' THEN quantita ELSE -quantita END),
-            SUM(CASE WHEN tipo='CARICO' THEN litri_totali ELSE -litri_totali END),
-            SUM(CASE WHEN tipo='CARICO' THEN (quantita * valore_unitario) ELSE -(quantita * valore_unitario) END)
+            SUM(CASE WHEN tipo='CARICO' THEN litri_totali ELSE -litri_totali END)
         FROM birra_condizionata
     """)
-  df = c.fetchone()
-  tot_confezioni = df[0] or 0
-  tot_litri_birra = df[1] or 0.0
-  valore_tot_magazzino = df[2] or 0.0
+  df_finiti = c.fetchone()
+  tot_confezioni = df_finiti[0] or 0
+  tot_litri_finiti = df_finiti[1] or 0.0
 
-# --- METRICHE RAPIDE IN ALTO ---
-st.subheader("📊 Quadro Generale Giacenze")
-m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-m_col1.metric("Malto Disponibile", f"{malto:.1f} kg")
-m_col2.metric("Luppolo Disponibile", f"{luppolo:.2f} kg")
-m_col3.metric("Lievito Disponibile", f"{lievito:.2f} kg")
-m_col4.metric("Mosto Cotte Anno", f"{mosto:.0f} LT")
-
-f_col1, f_col2, f_col3 = st.columns(3)
-f_col1.metric("Giacenza Finiti (Pezzi)", f"{tot_confezioni} pz")
-f_col2.metric("Birra a Magazzino", f"{tot_litri_birra:.1f} LT")
-f_col3.metric("Valore Economico Deposito", f"{valore_tot_magazzino:,.2f} €")
+# --- METRICHE IN EVIDENZA ---
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Malto Residuo", f"{malto:.1f} kg")
+col2.metric("Luppolo Residuo", f"{luppolo:.2f} kg")
+col3.metric("Lievito Residuo", f"{lievito:.2f} kg")
+col4.metric("Birra Pronta a Magazzino", f"{tot_litri_finiti:.1f} LT")
 
 st.divider()
 
-# --- TABS OPERATIVE ---
+# --- TABS ---
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📥 Carico XML / Acquisti",
     "🏷️ Imballaggi",
     "⚗️ Cotta (Mosto)",
     "📦 Confezionamento",
     "🚚 Vendita / Scarico",
-    "🏛️ Deposito Fiscale & Registri",
+    "🏛️ Giacenze Magazzino",
     "📑 Report 31/12 Commercialista",
 ])
 
-# 1. CARICO FATTURE
+# TAB 1: CARICO XML
 with tab1:
   st.subheader("Carico Automatico da Fattura XML")
-  up_xml = st.file_uploader("Trascina qui il file XML della Fattura", type=["xml"])
-  if up_xml and st.button("Analizza e Registra Acquisto"):
+  up_xml = st.file_uploader("Trascina file XML fattura", type=["xml"])
+  c_medio = st.number_input(
+      "Costo medio acquisto stimato (€/kg)", value=1.40, step=0.1
+  )
+  if up_xml and st.button("Analizza e Registra Fattura"):
     content = up_xml.read()
     root = ET.fromstring(content)
     cedente = root.find(".//DatiAnagraficiCedente//Denominazione")
@@ -222,23 +218,23 @@ with tab1:
       c = conn.cursor()
       c.execute(
           """
-                INSERT INTO materie_prime (tipo, data, riferimento, azienda, malto_kg, luppolo_kg, lievito_kg)
-                VALUES ('CARICO', ?, ?, ?, ?, ?, ?)
+                INSERT INTO materie_prime (tipo, data, riferimento, azienda, malto_kg, luppolo_kg, lievito_kg, costo_kg_medio)
+                VALUES ('CARICO', ?, ?, ?, ?, ?, ?, ?)
             """,
-          (data_doc, f"Fatt. {num_doc}", mittente, t_m, t_l, t_y),
+          (data_doc, f"Fatt. {num_doc}", mittente, t_m, t_l, t_y, c_medio),
       )
       conn.commit()
     st.success(
-        f"Caricati con successo da {mittente}: {t_m} kg Malto, {t_l} kg"
-        f" Luppolo, {t_y} kg Lievito."
+        f"Registrato da {mittente}: {t_m} kg Malto, {t_l} kg Luppolo, {t_y} kg"
+        " Lievito."
     )
     st.rerun()
 
-# 2. GESTIONE IMBALLAGGI
+# TAB 2: IMBALLAGGI
 with tab2:
-  st.subheader("Carico Forniture Imballaggi")
+  st.subheader("Carico Acquisti Imballaggi")
   with st.form("imb_form"):
-    i_data = st.date_input("Data Acquisto/Ricezione").strftime("%Y-%m-%d")
+    i_data = st.date_input("Data Acquisto").strftime("%Y-%m-%d")
     i_art = st.selectbox(
         "Tipo Imballaggio",
         [
@@ -251,20 +247,27 @@ with tab2:
             "Fusti vuoti 20L",
         ],
     )
-    i_qta = st.number_input("Quantità Acquistata (pezzi)", min_value=1, step=50)
-    i_doc = st.text_input("Rif. Fattura / Fornitore Imballaggi")
-    if st.form_submit_button("Registra Carico Imballaggio"):
+    i_qta = st.number_input("Quantità Acquistata (pz)", min_value=1, step=100)
+    i_costo = st.number_input(
+        "Costo Unitario Acquisto (€/pz escluso IVA)",
+        min_value=0.001,
+        value=0.25,
+        step=0.01,
+        format="%.3f",
+    )
+    i_doc = st.text_input("Rif. Fattura / Fornitore")
+    if st.form_submit_button("Carica Imballaggi"):
       with sqlite3.connect(DB_FILE) as conn:
         c = conn.cursor()
         c.execute(
             """
-                    INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita)
-                    VALUES ('CARICO', ?, ?, ?, ?)
+                    INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita, costo_unitario)
+                    VALUES ('CARICO', ?, ?, ?, ?, ?)
                 """,
-            (i_data, i_doc, i_art, i_qta),
+            (i_data, i_doc, i_art, i_qta, i_costo),
         )
         conn.commit()
-      st.success("Imballaggi caricati a magazzino!")
+      st.success("Imballaggi registrati!")
       st.rerun()
 
   st.write("---")
@@ -273,7 +276,9 @@ with tab2:
     df_imb = pd.read_sql_query(
         """
             SELECT articolo, 
-                   SUM(CASE WHEN tipo_movimento='CARICO' THEN quantita ELSE -quantita END) as giacenza_pz
+                   SUM(CASE WHEN tipo_movimento='CARICO' THEN quantita ELSE -quantita END) as giacenza_pz,
+                   MAX(costo_unitario) as costo_acquisto_unitario_euro,
+                   ROUND(SUM(CASE WHEN tipo_movimento='CARICO' THEN quantita ELSE -quantita END) * MAX(costo_unitario), 2) as totale_valore_euro
             FROM imballaggi 
             GROUP BY articolo
         """,
@@ -281,13 +286,13 @@ with tab2:
     )
     st.dataframe(df_imb, use_container_width=True)
 
-# 3. NUOVA COTTA
+# TAB 3: COTTA
 with tab3:
   st.subheader("Registra Cotta e Scarica Materie Prime")
   with st.form("cotta_form"):
     c_num = st.text_input("N° Cotta (es. C26-01)")
     lotto = st.text_input("Lotto Sfuso")
-    stile = st.text_input("Stile Birra (es. Blonde, IPA, Dubbel)")
+    stile = st.text_input("Stile Birra")
     litri = st.number_input("Litri Mosto Ottenuti", min_value=0.0, step=10.0)
     plato = st.number_input(
         "Grado Plato Reale", min_value=0.0, step=0.1, value=12.0
@@ -308,7 +313,7 @@ with tab3:
         c.execute(
             """
                     INSERT INTO materie_prime (tipo, data, riferimento, azienda, malto_kg, luppolo_kg, lievito_kg)
-                    VALUES ('SCARICO', ?, ?, 'PRODUZIONE COTTA', ?, ?, 0)
+                    VALUES ('SCARICO', ?, ?, 'COTTA PRODUZIONE', ?, ?, 0)
                 """,
             (oggi, f"Cotta {c_num} - {lotto}", m_usato, l_usato),
         )
@@ -316,26 +321,26 @@ with tab3:
       st.success("Cotta salvata e materie prime scaricate!")
       st.rerun()
 
-# 4. CONFEZIONAMENTO
+# TAB 4: CONFEZIONAMENTO
 with tab4:
-  st.subheader("Confezionamento (Carico Deposito Fiscale & Scarico Imballaggi)")
+  st.subheader("Confezionamento (Birra Pronta + Scarico Imballaggi)")
   with st.form("conf_form"):
     lotto_c = st.text_input("Riferimento Lotto Birra")
     fmt = st.selectbox(
-        "Formato Confezionamento",
+        "Formato",
         ["Fusto 30L", "Fusto 20L", "Bottiglia 0.33L", "Bottiglia 0.75L"],
     )
     plato_c = st.number_input(
-        "Grado Plato Birra", min_value=0.0, step=0.1, value=12.0
+        "Grado Plato Reale", min_value=0.0, step=0.1, value=12.0
     )
-    qta_c = st.number_input("Numero Contenitori Prodotti", min_value=1, step=1)
-    valore_un = st.number_input(
-        "Valore Commerciale Unitario (€ cad.)",
-        min_value=0.0,
-        step=0.5,
-        value=60.0 if "30L" in fmt else 1.8,
+    qta_c = st.number_input("Pezzi Prodotti", min_value=1, step=1)
+    costo_prod_lt = st.number_input(
+        "Mero Costo Industriale Produzione (€/Litro)",
+        min_value=0.1,
+        value=1.10,
+        step=0.05,
     )
-    if st.form_submit_button("Carica a Deposito Fiscale"):
+    if st.form_submit_button("Carica a Prodotti Finiti"):
       oggi = pd.Timestamp.now().strftime("%Y-%m-%d")
       l_un = (
           30.0
@@ -352,7 +357,7 @@ with tab4:
         c = conn.cursor()
         c.execute(
             """
-                    INSERT INTO birra_condizionata (tipo, data, lotto, formato, quantita, litri_totali, grado_plato, valore_unitario, documento_rif)
+                    INSERT INTO birra_condizionata (tipo, data, lotto, formato, quantita, litri_totali, grado_plato, costo_produzione_litro, documento_rif)
                     VALUES ('CARICO', ?, ?, ?, ?, ?, ?, ?, 'CONFEZIONAMENTO')
                 """,
             (
@@ -362,11 +367,11 @@ with tab4:
                 qta_c,
                 litri_tot,
                 plato_c,
-                valore_un,
+                costo_prod_lt,
             ),
         )
 
-        # Scarico automatico imballaggi collegati
+        # Scarico automatico degli imballaggi
         if "Bottiglia" in fmt:
           art_bot = (
               "Bottiglie 0.33L vuote"
@@ -398,22 +403,19 @@ with tab4:
           )
 
         conn.commit()
-      st.success("Birra caricata a magazzino e imballaggi scalati!")
+      st.success("Birra caricata e imballaggi scalati!")
       st.rerun()
 
-# 5. SCARICO VENDITA
+# TAB 5: VENDITA
 with tab5:
-  st.subheader("Scarico Vendite (Fatture / DDT Clienti)")
+  st.subheader("Scarico Vendite")
   with st.form("vendita_form"):
-    doc_v = st.text_input("Rif. Documento di Vendita / Cliente")
+    doc_v = st.text_input("Rif. Fattura / DDT Vendita")
     fmt_v = st.selectbox(
         "Formato Venduto",
         ["Fusto 30L", "Fusto 20L", "Bottiglia 0.33L", "Bottiglia 0.75L"],
     )
     qta_v = st.number_input("Quantità Venduta", min_value=1, step=1)
-    valore_vendita_un = st.number_input(
-        "Prezzo Vendita Unitario (€ cad.)", min_value=0.0, step=0.5
-    )
     if st.form_submit_button("Scarica da Magazzino"):
       oggi = pd.Timestamp.now().strftime("%Y-%m-%d")
       l_un = (
@@ -429,108 +431,148 @@ with tab5:
         c = conn.cursor()
         c.execute(
             """
-                    INSERT INTO birra_condizionata (tipo, data, lotto, formato, quantita, litri_totali, valore_unitario, documento_rif)
-                    VALUES ('SCARICO', ?, '-', ?, ?, ?, ?, ?)
+                    INSERT INTO birra_condizionata (tipo, data, lotto, formato, quantita, litri_totali, documento_rif)
+                    VALUES ('SCARICO', ?, '-', ?, ?, ?, ?)
                 """,
-            (
-                oggi,
-                fmt_v,
-                qta_v,
-                qta_v * l_un,
-                valore_vendita_un,
-                doc_v,
-            ),
+            (oggi, fmt_v, qta_v, qta_v * l_un, doc_v),
         )
         conn.commit()
-      st.success("Scarico vendita registrato!")
+      st.success("Vendita registrata!")
       st.rerun()
 
-# 6. DEPOSITO FISCALE & REGISTRI
+# TAB 6: REGISTRI E MAGAZZINO
 with tab6:
-  st.subheader("🏛️ Situazione Deposito Fiscale & Dati Accise")
+  st.subheader("🏛️ Situazione Prodotti Finiti a Magazzino")
   with sqlite3.connect(DB_FILE) as conn:
-    st.write("#### Giacenza Dettagliata Prodotti Finiti")
-    df_dep = pd.read_sql_query(
+    df_pf = pd.read_sql_query(
         """
             SELECT formato, 
                    SUM(CASE WHEN tipo='CARICO' THEN quantita ELSE -quantita END) as giacenza_pz,
                    SUM(CASE WHEN tipo='CARICO' THEN litri_totali ELSE -litri_totali END) as litri_magazzino,
-                   SUM(CASE WHEN tipo='CARICO' THEN (quantita * valore_unitario) ELSE -(quantita * valore_unitario) END) as valore_euro
+                   AVG(grado_plato) as plato_medio
             FROM birra_condizionata 
             GROUP BY formato
         """,
         conn,
     )
-    st.dataframe(df_dep, use_container_width=True)
+    st.dataframe(df_pf, use_container_width=True)
 
     st.write("---")
-    st.write("#### Registro Mosto Ufficiale (Allegato I)")
+    st.write("#### Registro Mosto (Allegato I)")
     st.dataframe(
         pd.read_sql_query("SELECT * FROM registro_mosto", conn),
         use_container_width=True,
     )
 
-    st.write("#### Registro Birra Condizionata Ufficiale (Allegato III)")
+    st.write("#### Registro Birra Condizionata (Allegato III)")
     st.dataframe(
         pd.read_sql_query("SELECT * FROM birra_condizionata", conn),
         use_container_width=True,
     )
 
-# 7. REPORT COMMERCIALE 31/12
+# TAB 7: REPORT 31/12 COMMERCIALISTA
 with tab7:
-  st.subheader("📑 Report Giacenze di Chiusura Esercizio (Commercialista)")
-  st.write(
-      "Riepilogo fiscale pronto per la dichiarazione delle rimanenze finali."
-  )
+  st.subheader("📑 Riepilogo Ufficiale al 31 Dicembre per Commercialista")
+
+  costo_kg_m = 1.35
+  costo_kg_l = 28.00
+  costo_kg_y = 65.00
+
+  valore_tot_mp = (malto * costo_kg_m) + (luppolo * costo_kg_l) + (lievito * costo_kg_y)
 
   with sqlite3.connect(DB_FILE) as conn:
-    # Materie prime
-    df_mat = pd.DataFrame([{
-        "Categoria": "Materie Prime",
-        "Articolo": "Malto Amidaceo",
-        "Giacenza": f"{malto:.2f} kg",
-    }, {
-        "Categoria": "Materie Prime",
-        "Articolo": "Luppolo",
-        "Giacenza": f"{luppolo:.2f} kg",
-    }, {
-        "Categoria": "Materie Prime",
-        "Articolo": "Lievito",
-        "Giacenza": f"{lievito:.2f} kg",
-    }])
+    c = conn.cursor()
+    # Calcolo totale imballaggi
+    c.execute("""
+            SELECT SUM(giacenza * costo) FROM (
+                SELECT SUM(CASE WHEN tipo_movimento='CARICO' THEN quantita ELSE -quantita END) as giacenza,
+                       MAX(costo_unitario) as costo
+                FROM imballaggi 
+                GROUP BY articolo
+            )
+        """)
+    valore_tot_imb = c.fetchone()[0] or 0.0
 
-    # Imballaggi
-    df_imb_rep = pd.read_sql_query(
-        """
-            SELECT 'Imballaggi' as Categoria, articolo as Articolo,
-                   CAST(SUM(CASE WHEN tipo_movimento='CARICO' THEN quantita ELSE -quantita END) AS TEXT) || ' pz' as Giacenza
-            FROM imballaggi 
-            GROUP BY articolo
-        """,
-        conn,
-    )
+    # Calcolo prodotti finiti: (Litri * costo_produzione) + Accisa assolta (Litri * Plato / 100 * 1.794)
+    c.execute("""
+            SELECT 
+                SUM(CASE WHEN tipo='CARICO' THEN litri_totali ELSE -litri_totali END),
+                SUM(CASE WHEN tipo='CARICO' THEN (litri_totali * costo_produzione_litro) ELSE -(litri_totali * costo_produzione_litro) END),
+                SUM(CASE WHEN tipo='CARICO' THEN (litri_totali * grado_plato / 100.0 * ?) ELSE -(litri_totali * grado_plato / 100.0 * ?) END)
+            FROM birra_condizionata
+        """, (ALIQUOTA_ACCISA_PLATO, ALIQUOTA_ACCISA_PLATO))
+    res_finiti = c.fetchone()
+    litri_rimasti_pf = res_finiti[0] or 0.0
+    costo_ind_pf = res_finiti[1] or 0.0
+    accisa_assolta_pf = res_finiti[2] or 0.0
+    valore_tot_pf = costo_ind_pf + accisa_assolta_pf
 
-    # Birra a Deposito
-    df_birra_rep = pd.read_sql_query(
-        """
-            SELECT 'Birra Pronta' as Categoria, formato as Articolo,
-                   CAST(SUM(CASE WHEN tipo='CARICO' THEN quantita ELSE -quantita END) AS TEXT) || ' pz (' || 
-                   CAST(ROUND(SUM(CASE WHEN tipo='CARICO' THEN litri_totali ELSE -litri_totali END), 1) AS TEXT) || ' LT - Valore: ' ||
-                   CAST(ROUND(SUM(CASE WHEN tipo='CARICO' THEN (quantita * valore_unitario) ELSE -(quantita * valore_unitario) END), 2) AS TEXT) || ' €)' as Giacenza
-            FROM birra_condizionata 
-            GROUP BY formato
-        """,
-        conn,
-    )
+  totale_bilancio_complessivo = valore_tot_mp + valore_tot_imb + valore_tot_pf
 
-    report_totale = pd.concat(
-        [df_mat, df_imb_rep, df_birra_rep], ignore_index=True
-    )
-    st.table(report_totale)
+  # Visualizzazione formattata richiesta
+  st.markdown(f"""
+    ### **Valori di Riepilogo al 31 Dicembre:**
 
-    st.download_button(
-        label="📥 Scarica Report Inventario in CSV per Commercialista",
-        data=report_totale.to_csv(index=False).encode("utf-8"),
-        file_name="inventario_fine_anno_birrificio.csv",
-        mime="text/csv",
-    )
+    * **MATERIE PRIME IN GIACENZA: € {valore_tot_mp:,.2f}**  
+      *(Valutate al costo effettivo di acquisto escluso IVA: {malto:.1f} kg malto, {luppolo:.2f} kg luppolo, {lievito:.2f} kg lievito)*
+
+    * **IMBALLAGGI IN GIACENZA: € {valore_tot_imb:,.2f}**  
+      *(Valutati al costo di acquisto escluso IVA: bottiglie vuote, fusti, tappi, scatole ed etichette)*
+
+    * **PRODOTTI FINITI (Birra confezionata): € {valore_tot_pf:,.2f}**  
+      *(Litri totali a magazzino: {litri_rimasti_pf:.1f} LT | Costo industriale: € {costo_ind_pf:,.2f} | Accisa assolta: € {accisa_assolta_pf:,.2f})*  
+      > **Nota per il bilancio:** Questo valore è comprensivo sia del mero costo industriale di produzione, sia dell'accisa effettiva già assolta/liquidata sui litri rimasti in giacenza, in quanto merce non in regime sospensivo (art. 35 D.Lgs. 504/95 e D.M. 138/2019).
+
+    ---
+    ### 💰 **TOTALE RIMANENZE FINALI DI BILANCIO AL 31/12: € {totale_bilancio_complessivo:,.2f}**
+    """)
+
+  # Tabella per export CSV
+  dati_export = [
+      {
+          "Macro-Voce": "MATERIE PRIME",
+          "Dettaglio": "Malti, Luppoli, Lieviti a magazzino",
+          "Criterio Valutazione": "Costo di acquisto escluso IVA",
+          "Valore (€)": round(valore_tot_mp, 2),
+          "Note di Bilancio": "Giacenze fisiche non utilizzate al 31/12",
+      },
+      {
+          "Macro-Voce": "IMBALLAGGI",
+          "Dettaglio": "Bottiglie vuote, fusti, tappi, scatole, etichette",
+          "Criterio Valutazione": "Costo di acquisto escluso IVA",
+          "Valore (€)": round(valore_tot_imb, 2),
+          "Note di Bilancio": "Scorte imballaggi al 31/12",
+      },
+      {
+          "Macro-Voce": "PRODOTTI FINITI",
+          "Dettaglio": f"Birra confezionata ({litri_rimasti_pf:.1f} Litri)",
+          "Criterio Valutazione": (
+              f"Costo industriale (€{costo_ind_pf:.2f}) + Accisa assolta"
+              f" (€{accisa_assolta_pf:.2f})"
+          ),
+          "Valore (€)": round(valore_tot_pf, 2),
+          "Note di Bilancio": (
+              "Comprensivo di costo industriale e accisa già assolta/liquidata"
+              " (merce non in sospensione)"
+          ),
+      },
+      {
+          "Macro-Voce": "TOTALE BILANCIO",
+          "Dettaglio": "Somma rimanenze finali al 31/12",
+          "Criterio Valutazione": "Totale civilistico e fiscale",
+          "Valore (€)": round(totale_bilancio_complessivo, 2),
+          "Note di Bilancio": "Valore da iscrivere a bilancio di chiusura",
+      },
+  ]
+
+  df_exp = pd.DataFrame(dati_export)
+  st.dataframe(df_exp, use_container_width=True)
+
+  csv_out = io.StringIO()
+  df_exp.to_csv(csv_out, index=False)
+  st.download_button(
+      label="📥 SCARICA PROSPETTO 31/12 PER IL COMMERCIALISTA (CSV)",
+      data=csv_out.getvalue().encode("utf-8"),
+      file_name="Prospetto_Rimanenze_31_12_Commercialista.csv",
+      mime="text/csv",
+  )

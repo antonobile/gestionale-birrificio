@@ -1,3 +1,4 @@
+import base64
 import io
 import re
 import sqlite3
@@ -105,81 +106,82 @@ init_db()
 
 
 def genera_pdf_commercialista(val_mp, val_imb, val_pf, tot_bilancio, malto, luppolo, lievito, litri_pf, costo_ind, accisa_pf):
+  # A4 standard: 210 x 297 mm. Margini 15 mm -> Larghezza utile: 180 mm esatti
   pdf = FPDF(orientation="P", unit="mm", format="A4")
   pdf.set_auto_page_break(auto=True, margin=15)
   pdf.add_page()
-  pdf.set_margins(12, 12, 12)
+  pdf.set_margins(15, 15, 15)
 
-  # Intestazione
+  # Titolo principale
   pdf.set_font("Helvetica", "B", 15)
-  pdf.cell(186, 9, "PROSPETTO RIMANENZE DI MAGAZZINO AL 31/12", new_x="LMARGIN", new_y="NEXT", align="C")
+  pdf.cell(180, 8, "PROSPETTO RIMANENZE DI MAGAZZINO AL 31/12", align="C", new_x="LMARGIN", new_y="NEXT")
   pdf.set_font("Helvetica", "I", 9)
-  pdf.cell(186, 5, "Chiusura Esercizio Fiscale - Rilevazione Consistenze e Valutazioni", new_x="LMARGIN", new_y="NEXT", align="C")
-  pdf.ln(5)
+  pdf.cell(180, 5, "Chiusura Esercizio Fiscale - Rilevazione Consistenze e Valutazioni", align="C", new_x="LMARGIN", new_y="NEXT")
+  pdf.ln(4)
 
-  # Dati Aziendali
+  # Info Azienda
   pdf.set_font("Helvetica", "B", 9)
-  pdf.cell(186, 5, "Attivita': Fabbricazione di birra (Microbirrificio art. 35, c. 3-bis D.Lgs. 504/95)", new_x="LMARGIN", new_y="NEXT")
+  pdf.cell(180, 5, "Attività: Fabbricazione di birra (Microbirrificio art. 35, c. 3-bis D.Lgs. 504/95)", new_x="LMARGIN", new_y="NEXT")
   pdf.set_font("Helvetica", "", 9)
-  pdf.cell(186, 5, "Destinatario: Studio Commerciale / Collegio Sindacale", new_x="LMARGIN", new_y="NEXT")
-  pdf.ln(3)
+  pdf.cell(180, 5, "Destinatario: Studio Commerciale / Collegio Sindacale", new_x="LMARGIN", new_y="NEXT")
+  pdf.ln(2)
 
   # Linea divisoria
   pdf.set_draw_color(180, 180, 180)
-  pdf.line(12, pdf.get_y(), 198, pdf.get_y())
+  pdf.line(15, pdf.get_y(), 195, pdf.get_y())
   pdf.ln(4)
 
-  # 1. Materie Prime
+  # 1. MATERIE PRIME
   pdf.set_fill_color(240, 242, 245)
   pdf.set_font("Helvetica", "B", 10)
-  pdf.cell(186, 7, " 1. MATERIE PRIME IN GIACENZA", new_x="LMARGIN", new_y="NEXT", fill=True)
+  pdf.cell(180, 6, " 1. MATERIE PRIME IN GIACENZA", fill=True, new_x="LMARGIN", new_y="NEXT")
   pdf.set_font("Helvetica", "", 9)
-  pdf.multi_cell(186, 5, f"Consistenze fisiche: Malto amidaceo ({malto:.1f} kg), Luppoli ({luppolo:.2f} kg), Lieviti ({lievito:.2f} kg).\nCriterio: Valutate al costo effettivo di acquisto da fatture fornitori, al netto di IVA.")
+  pdf.multi_cell(180, 4.5, f"Consistenze fisiche: Malto amidaceo ({malto:.1f} kg), Luppoli ({luppolo:.2f} kg), Lieviti ({lievito:.2f} kg).\nCriterio: Valutate al costo effettivo di acquisto da fatture fornitori, al netto di IVA.")
   pdf.set_font("Helvetica", "B", 9)
-  pdf.cell(130, 6, "Valore Fiscale Materie Prime al 31/12:", new_x="RIGHT", new_y="TOP")
-  pdf.cell(56, 6, f"EUR  {val_mp:,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
-  pdf.ln(4)
+  pdf.cell(125, 6, "Valore Fiscale Materie Prime al 31/12:", new_x="RIGHT", new_y="TOP")
+  pdf.cell(55, 6, f"EUR  {val_mp:,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
+  pdf.ln(3)
 
-  # 2. Imballaggi
+  # 2. IMBALLAGGI
   pdf.set_font("Helvetica", "B", 10)
-  pdf.cell(186, 7, " 2. IMBALLAGGI IN GIACENZA", new_x="LMARGIN", new_y="NEXT", fill=True)
+  pdf.cell(180, 6, " 2. IMBALLAGGI IN GIACENZA", fill=True, new_x="LMARGIN", new_y="NEXT")
   pdf.set_font("Helvetica", "", 9)
-  pdf.multi_cell(186, 5, "Composizione: Scorte di bottiglie vuote (0.33L/0.75L), fusti vuoti, tappi a corona, scatole ed etichette.\nCriterio: Valutati al costo di acquisto fatturato, al netto di IVA.")
+  pdf.multi_cell(180, 4.5, "Composizione: Scorte di bottiglie vuote (0.33L/0.75L), fusti vuoti, tappi a corona, scatole ed etichette.\nCriterio: Valutati al costo di acquisto fatturato, al netto di IVA.")
   pdf.set_font("Helvetica", "B", 9)
-  pdf.cell(130, 6, "Valore Fiscale Imballaggi al 31/12:", new_x="RIGHT", new_y="TOP")
-  pdf.cell(56, 6, f"EUR  {val_imb:,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
-  pdf.ln(4)
+  pdf.cell(125, 6, "Valore Fiscale Imballaggi al 31/12:", new_x="RIGHT", new_y="TOP")
+  pdf.cell(55, 6, f"EUR  {val_imb:,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
+  pdf.ln(3)
 
-  # 3. Prodotti Finiti
+  # 3. PRODOTTI FINITI
   pdf.set_font("Helvetica", "B", 10)
-  pdf.cell(186, 7, " 3. PRODOTTI FINITI (Birra Confezionata)", new_x="LMARGIN", new_y="NEXT", fill=True)
+  pdf.cell(180, 6, " 3. PRODOTTI FINITI (Birra Confezionata)", fill=True, new_x="LMARGIN", new_y="NEXT")
   pdf.set_font("Helvetica", "", 9)
-  pdf.multi_cell(186, 5, f"Volume a magazzino: {litri_pf:.1f} Litri condizionati in fusti e bottiglie.\n- Quota Costo Industriale di Produzione: EUR {costo_ind:,.2f}\n- Quota Accisa Dovuta/Assolta liquidata alla produzione: EUR {accisa_pf:,.2f}")
+  pdf.multi_cell(180, 4.5, f"Volume a magazzino: {litri_pf:.1f} Litri condizionati in fusti e bottiglie.\n- Quota Costo Industriale di Produzione: EUR {costo_ind:,.2f}\n- Quota Accisa Dovuta/Assolta liquidata alla produzione: EUR {accisa_pf:,.2f}")
   pdf.set_font("Helvetica", "I", 8)
-  pdf.multi_cell(186, 4, "Nota per il bilancio: Ai sensi del D.Lgs. 504/95 e D.M. 138/2019 per i microbirrifici privi di deposito fiscale sospensivo, l'accisa e' assolta/liquidata alla produzione e costituisce costo accessorio certo incorporato nel valore delle giacenze rimaste invendute.")
+  pdf.multi_cell(180, 3.8, "Nota per il bilancio: Ai sensi del D.Lgs. 504/95 e D.M. 138/2019 per i microbirrifici privi di deposito fiscale sospensivo, l'accisa e' assolta/liquidata alla produzione e costituisce costo accessorio certo incorporato nel valore delle giacenze rimaste invendute.")
   pdf.set_font("Helvetica", "B", 9)
-  pdf.cell(130, 6, "Valore Fiscale Prodotti Finiti al 31/12:", new_x="RIGHT", new_y="TOP")
-  pdf.cell(56, 6, f"EUR  {val_pf:,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
-  pdf.ln(6)
+  pdf.cell(125, 6, "Valore Fiscale Prodotti Finiti al 31/12:", new_x="RIGHT", new_y="TOP")
+  pdf.cell(55, 6, f"EUR  {val_pf:,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
+  pdf.ln(5)
 
-  # Box Totale
+  # BOX TOTALE
   cur_y = pdf.get_y()
-  pdf.set_draw_color(50, 90, 160)
+  pdf.set_draw_color(40, 80, 150)
   pdf.set_fill_color(230, 240, 255)
-  pdf.rect(12, cur_y, 186, 14, "DF")
-  pdf.set_xy(16, cur_y + 3)
+  pdf.rect(15, cur_y, 180, 13, "DF")
+  pdf.set_xy(18, cur_y + 2.5)
   pdf.set_font("Helvetica", "B", 11)
   pdf.cell(115, 8, "TOTALE RIMANENZE FINALI DI BILANCIO AL 31/12:", new_x="RIGHT", new_y="TOP")
-  pdf.cell(63, 8, f"EUR  {tot_bilancio:,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
+  pdf.cell(58, 8, f"EUR  {tot_bilancio:,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
   pdf.ln(12)
 
-  # Firme
+  # FIRME
   pdf.set_font("Helvetica", "", 9)
-  pdf.cell(93, 5, "Data: 31/12/2026", new_x="RIGHT", new_y="TOP")
-  pdf.cell(93, 5, "Firma Legale Rappresentante", align="R", new_x="LMARGIN", new_y="NEXT")
-  pdf.ln(6)
-  pdf.cell(93, 5, "_______________________", new_x="RIGHT", new_y="TOP")
-  pdf.cell(93, 5, "____________________________________", align="R", new_x="LMARGIN", new_y="NEXT")
+  pdf.cell(90, 5, "Data: 31/12/2026", new_x="RIGHT", new_y="TOP")
+  pdf.cell(90, 5, "Firma Legale Rappresentante", align="R", new_x="LMARGIN", new_y="NEXT")
+  pdf.ln(7)
+  pdf.cell(90, 5, "_______________________", new_x="RIGHT", new_y="TOP")
+  pdf.cell(90, 5, "____________________________________", align="R", new_x="LMARGIN", new_y="NEXT")
 
   return bytes(pdf.output())
 
@@ -549,9 +551,18 @@ with tab7:
       accisa_assolta_pf,
   )
 
-  st.download_button(
-      label="📄 SCARICA REPORT UFFICIALE 31/12 (PDF PER COMMERCIALISTA)",
-      data=pdf_bytes,
-      file_name="Prospetto_Rimanenze_31_12_Commercialista.pdf",
-      mime="application/pdf",
-  )
+  col_d1, col_d2 = st.columns([1, 2])
+  with col_d1:
+    st.download_button(
+        label="📄 SCARICA REPORT UFFICIALE 31/12 (PDF)",
+        data=pdf_bytes,
+        file_name="Prospetto_Rimanenze_31_12_Commercialista.pdf",
+        mime="application/pdf",
+    )
+
+  st.write("---")
+  st.write("#### 👁️ Anteprima Documento PDF Ufficiale")
+  # Visualizzatore integrato
+  b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
+  pdf_display = f'<iframe src="data:application/pdf;base64,{b64_pdf}" width="100%" height="750" type="application/pdf" style="border: 1px solid #ccc; border-radius: 8px;"></iframe>'
+  st.markdown(pdf_display, unsafe_allow_html=True)

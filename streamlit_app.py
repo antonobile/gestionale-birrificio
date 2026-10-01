@@ -105,87 +105,98 @@ init_db()
 
 
 def genera_pdf_commercialista(val_mp, val_imb, val_pf, tot_bilancio, malto, luppolo, lievito, litri_pf, costo_ind, accisa_pf):
-  pdf = FPDF(orientation="P", unit="mm", format="A4")
+  # Formato Orizzontale (Landscape A4: 297 mm larghezza, 210 mm altezza)
+  pdf = FPDF(orientation="L", unit="mm", format="A4")
   pdf.set_auto_page_break(auto=False)
   pdf.add_page()
-  pdf.set_margins(15, 15, 15)
+  pdf.set_margins(15, 12, 15)
 
-  # Intestazione
+  # Titolo e Dati Aziendali
   pdf.set_font("Helvetica", "B", 15)
-  pdf.set_xy(15, 15)
-  pdf.cell(180, 8, "PROSPETTO RIMANENZE DI MAGAZZINO AL 31/12", align="C", ln=1)
+  pdf.set_xy(15, 12)
+  pdf.cell(267, 8, "PROSPETTO RIMANENZE DI MAGAZZINO AL 31/12", align="C", ln=1)
 
   pdf.set_font("Helvetica", "I", 9)
-  pdf.cell(180, 5, "Chiusura Esercizio Fiscale - Rilevazione Consistenze e Valutazioni", align="C", ln=1)
-  pdf.ln(4)
+  pdf.set_x(15)
+  pdf.cell(267, 5, "Chiusura Esercizio Fiscale - Rilevazione Consistenze e Valutazioni", align="C", ln=1)
+  pdf.ln(2)
 
   pdf.set_font("Helvetica", "B", 9)
-  pdf.cell(180, 5, "Attività: Birrificio", ln=1)
+  pdf.set_x(15)
+  pdf.cell(130, 5, "Attivita': Birrificio", ln=0)
   pdf.set_font("Helvetica", "", 9)
-  pdf.cell(180, 5, "Destinatario: Studio Commerciale", ln=1)
-  pdf.ln(3)
+  pdf.cell(137, 5, "Destinatario: Studio Commerciale", align="R", ln=1)
 
   pdf.set_draw_color(180, 180, 180)
-  pdf.line(15, pdf.get_y(), 195, pdf.get_y())
-  pdf.ln(6)
+  pdf.line(15, pdf.get_y() + 2, 282, pdf.get_y() + 2)
+  pdf.ln(5)
 
-  # SEZIONE 1: MATERIE PRIME
+  # 1. MATERIE PRIME
   pdf.set_fill_color(240, 242, 245)
   pdf.set_font("Helvetica", "B", 10)
-  pdf.cell(180, 7, " 1. MATERIE PRIME IN GIACENZA", fill=True, ln=1)
+  pdf.set_x(15)
+  pdf.cell(267, 6, " 1. MATERIE PRIME IN GIACENZA", fill=True, ln=1)
 
   pdf.set_font("Helvetica", "", 9)
-  pdf.multi_cell(180, 5, f"Consistenze: Malto amidaceo ({malto:.1f} kg), Luppoli ({luppolo:.2f} kg), Lieviti ({lievito:.2f} kg).\nValutate al costo effettivo di acquisto, al netto di IVA.")
+  pdf.set_x(15)
+  pdf.cell(267, 5, f"Consistenze: Malto amidaceo ({malto:.1f} kg), Luppoli ({luppolo:.2f} kg), Lieviti ({lievito:.2f} kg) - Valutate al costo effettivo escluso IVA.", ln=1)
 
   pdf.set_font("Helvetica", "B", 9)
-  pdf.cell(120, 6, "Valore Fiscale Materie Prime al 31/12:")
-  pdf.cell(60, 6, f"EUR  {val_mp:,.2f}", align="R", ln=1)
-  pdf.ln(6)
+  pdf.set_x(15)
+  pdf.cell(190, 6, "Valore Fiscale Materie Prime al 31/12:", ln=0)
+  pdf.cell(77, 6, f"EUR  {val_mp:,.2f}", align="R", ln=1)
+  pdf.ln(3)
 
-  # SEZIONE 2: IMBALLAGGI
+  # 2. IMBALLAGGI
   pdf.set_font("Helvetica", "B", 10)
-  pdf.cell(180, 7, " 2. IMBALLAGGI IN GIACENZA", fill=True, ln=1)
+  pdf.set_x(15)
+  pdf.cell(267, 6, " 2. IMBALLAGGI IN GIACENZA", fill=True, ln=1)
 
   pdf.set_font("Helvetica", "", 9)
-  pdf.multi_cell(180, 5, "Composizione: Scorte di bottiglie vuote, fusti, tappi a corona, scatole ed etichette.\nValutati al costo di acquisto, al netto di IVA.")
+  pdf.set_x(15)
+  pdf.cell(267, 5, "Composizione: Scorte di bottiglie vuote, fusti, tappi a corona, scatole ed etichette - Valutati al costo di acquisto escluso IVA.", ln=1)
 
   pdf.set_font("Helvetica", "B", 9)
-  pdf.cell(120, 6, "Valore Fiscale Imballaggi al 31/12:")
-  pdf.cell(60, 6, f"EUR  {val_imb:,.2f}", align="R", ln=1)
-  pdf.ln(6)
+  pdf.set_x(15)
+  pdf.cell(190, 6, "Valore Fiscale Imballaggi al 31/12:", ln=0)
+  pdf.cell(77, 6, f"EUR  {val_imb:,.2f}", align="R", ln=1)
+  pdf.ln(3)
 
-  # SEZIONE 3: PRODOTTI FINITI (BIRRA CONFEZIONATA)
+  # 3. PRODOTTI FINITI
   pdf.set_font("Helvetica", "B", 10)
-  pdf.cell(180, 7, " 3. PRODOTTI FINITI (Birra Confezionata)", fill=True, ln=1)
+  pdf.set_x(15)
+  pdf.cell(267, 6, " 3. PRODOTTI FINITI (Birra Confezionata)", fill=True, ln=1)
 
   pdf.set_font("Helvetica", "", 9)
-  pdf.multi_cell(180, 5, f"Volume totale a magazzino: {litri_pf:.1f} Litri confezionati in fusti e bottiglie.")
+  pdf.set_x(15)
+  pdf.cell(267, 5, f"Volume totale a magazzino: {litri_pf:.1f} Litri confezionati in fusti e bottiglie.", ln=1)
 
   pdf.set_font("Helvetica", "B", 9)
-  pdf.cell(120, 6, "Valore Fiscale Prodotti Finiti al 31/12:")
-  pdf.cell(60, 6, f"EUR  {val_pf:,.2f}", align="R", ln=1)
-  pdf.ln(8)
+  pdf.set_x(15)
+  pdf.cell(190, 6, "Valore Fiscale Prodotti Finiti al 31/12:", ln=0)
+  pdf.cell(77, 6, f"EUR  {val_pf:,.2f}", align="R", ln=1)
+  pdf.ln(5)
 
-  # BOX TOTALE GENERALE
+  # BOX TOTALE
   y_tot = pdf.get_y()
   pdf.set_draw_color(40, 80, 150)
   pdf.set_fill_color(230, 240, 255)
-  pdf.rect(15, y_tot, 180, 13, "DF")
-  pdf.set_xy(18, y_tot + 2.5)
+  pdf.rect(15, y_tot, 267, 12, "DF")
+  pdf.set_xy(18, y_tot + 2)
   pdf.set_font("Helvetica", "B", 11)
-  pdf.cell(115, 8, "TOTALE RIMANENZE FINALI DI BILANCIO AL 31/12:")
-  pdf.cell(57, 8, f"EUR  {tot_bilancio:,.2f}", align="R", ln=1)
-  pdf.ln(16)
+  pdf.cell(180, 8, "TOTALE RIMANENZE FINALI DI BILANCIO AL 31/12:", ln=0)
+  pdf.cell(80, 8, f"EUR  {tot_bilancio:,.2f}", align="R", ln=1)
+  pdf.ln(12)
 
   # FIRME
   pdf.set_font("Helvetica", "", 9)
   pdf.set_x(15)
-  pdf.cell(90, 5, "Data: 31/12/2026")
-  pdf.cell(90, 5, "Firma Titolare", align="R", ln=1)
-  pdf.ln(8)
+  pdf.cell(130, 5, "Data: 31/12/2026", ln=0)
+  pdf.cell(137, 5, "Firma Titolare", align="R", ln=1)
+  pdf.ln(6)
   pdf.set_x(15)
-  pdf.cell(90, 5, "_______________________")
-  pdf.cell(90, 5, "____________________________________", align="R", ln=1)
+  pdf.cell(130, 5, "_______________________", ln=0)
+  pdf.cell(137, 5, "____________________________________", align="R", ln=1)
 
   return bytes(pdf.output())
 
@@ -500,7 +511,7 @@ with tab6:
     st.write("#### Registro Birra Condizionata (Allegato III)")
     st.dataframe(pd.read_sql_query("SELECT * FROM birra_condizionata", conn), width="stretch")
 
-# TAB 7: REPORT 31/12 (TABELLE + DOWNLOAD PDF PULITO)
+# TAB 7: REPORT 31/12
 with tab7:
   st.subheader("📑 Riepilogo al 31 Dicembre")
 

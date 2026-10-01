@@ -108,75 +108,78 @@ def genera_pdf_commercialista(val_mp, val_imb, val_pf, tot_bilancio, malto, lupp
   pdf = FPDF(orientation="P", unit="mm", format="A4")
   pdf.set_auto_page_break(auto=True, margin=15)
   pdf.add_page()
+  pdf.set_margins(12, 12, 12)
 
   # Intestazione
-  pdf.set_font("Helvetica", "B", 16)
-  pdf.cell(0, 10, "PROSPETTO RIMANENZE DI MAGAZZINO AL 31/12", ln=True, align="C")
-  pdf.set_font("Helvetica", "I", 10)
-  pdf.cell(0, 6, "Chiusura Esercizio Fiscale - Rilevazione Consistenze e Valutazioni", ln=True, align="C")
-  pdf.ln(8)
-
-  # Dati Aziendali
-  pdf.set_font("Helvetica", "B", 10)
-  pdf.cell(0, 5, "Attività: Fabbricazione di birra (Microbirrificio art. 35, c. 3-bis D.Lgs. 504/95)", ln=True)
-  pdf.set_font("Helvetica", "", 10)
-  pdf.cell(0, 5, "Destinatario: Studio Commerciale / Collegio Sindacale", ln=True)
-  pdf.ln(6)
-
-  # Linea separatore
-  pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+  pdf.set_font("Helvetica", "B", 15)
+  pdf.cell(186, 9, "PROSPETTO RIMANENZE DI MAGAZZINO AL 31/12", new_x="LMARGIN", new_y="NEXT", align="C")
+  pdf.set_font("Helvetica", "I", 9)
+  pdf.cell(186, 5, "Chiusura Esercizio Fiscale - Rilevazione Consistenze e Valutazioni", new_x="LMARGIN", new_y="NEXT", align="C")
   pdf.ln(5)
 
-  # Sezione 1: Materie Prime
-  pdf.set_fill_color(240, 240, 240)
-  pdf.set_font("Helvetica", "B", 11)
-  pdf.cell(0, 7, "1. MATERIE PRIME IN GIACENZA", ln=True, fill=True)
+  # Dati Aziendali
+  pdf.set_font("Helvetica", "B", 9)
+  pdf.cell(186, 5, "Attivita': Fabbricazione di birra (Microbirrificio art. 35, c. 3-bis D.Lgs. 504/95)", new_x="LMARGIN", new_y="NEXT")
   pdf.set_font("Helvetica", "", 9)
-  pdf.multi_cell(0, 5, f"Consistenze fisiche: Malto amidaceo ({malto:.1f} kg), Luppoli ({luppolo:.2f} kg), Lieviti ({lievito:.2f} kg).\nCriterio: Valutate al costo effettivo di acquisto fatturato, al netto dell'IVA.")
-  pdf.set_font("Helvetica", "B", 10)
-  pdf.cell(140, 6, "Valore Fiscale Materie Prime al 31/12:")
-  pdf.cell(50, 6, f"EUR  {val_mp:,.2f}", align="R", ln=True)
+  pdf.cell(186, 5, "Destinatario: Studio Commerciale / Collegio Sindacale", new_x="LMARGIN", new_y="NEXT")
+  pdf.ln(3)
+
+  # Linea divisoria
+  pdf.set_draw_color(180, 180, 180)
+  pdf.line(12, pdf.get_y(), 198, pdf.get_y())
   pdf.ln(4)
 
-  # Sezione 2: Imballaggi
-  pdf.set_font("Helvetica", "B", 11)
-  pdf.cell(0, 7, "2. IMBALLAGGI IN GIACENZA", ln=True, fill=True)
-  pdf.set_font("Helvetica", "", 9)
-  pdf.multi_cell(0, 5, "Composizione: Scorte di bottiglie vuote (0.33L/0.75L), fusti vuoti, tappi a corona, scatole/cartoni ed etichette.\nCriterio: Valutati al costo medio di acquisto da fattura fornitore, al netto dell'IVA.")
+  # 1. Materie Prime
+  pdf.set_fill_color(240, 242, 245)
   pdf.set_font("Helvetica", "B", 10)
-  pdf.cell(140, 6, "Valore Fiscale Imballaggi al 31/12:")
-  pdf.cell(50, 6, f"EUR  {val_imb:,.2f}", align="R", ln=True)
+  pdf.cell(186, 7, " 1. MATERIE PRIME IN GIACENZA", new_x="LMARGIN", new_y="NEXT", fill=True)
+  pdf.set_font("Helvetica", "", 9)
+  pdf.multi_cell(186, 5, f"Consistenze fisiche: Malto amidaceo ({malto:.1f} kg), Luppoli ({luppolo:.2f} kg), Lieviti ({lievito:.2f} kg).\nCriterio: Valutate al costo effettivo di acquisto da fatture fornitori, al netto di IVA.")
+  pdf.set_font("Helvetica", "B", 9)
+  pdf.cell(130, 6, "Valore Fiscale Materie Prime al 31/12:", new_x="RIGHT", new_y="TOP")
+  pdf.cell(56, 6, f"EUR  {val_mp:,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
   pdf.ln(4)
 
-  # Sezione 3: Prodotti Finiti
-  pdf.set_font("Helvetica", "B", 11)
-  pdf.cell(0, 7, "3. PRODOTTI FINITI (Birra Confezionata)", ln=True, fill=True)
+  # 2. Imballaggi
+  pdf.set_font("Helvetica", "B", 10)
+  pdf.cell(186, 7, " 2. IMBALLAGGI IN GIACENZA", new_x="LMARGIN", new_y="NEXT", fill=True)
   pdf.set_font("Helvetica", "", 9)
-  pdf.multi_cell(0, 5, f"Volume a magazzino: {litri_pf:.1f} Litri condizionati in fusti e bottiglie.\n- Quota Costo Industriale di Produzione: EUR {costo_ind:,.2f}\n- Quota Accisa Dovuta/Assolta liquidata alla produzione: EUR {accisa_pf:,.2f}")
+  pdf.multi_cell(186, 5, "Composizione: Scorte di bottiglie vuote (0.33L/0.75L), fusti vuoti, tappi a corona, scatole ed etichette.\nCriterio: Valutati al costo di acquisto fatturato, al netto di IVA.")
+  pdf.set_font("Helvetica", "B", 9)
+  pdf.cell(130, 6, "Valore Fiscale Imballaggi al 31/12:", new_x="RIGHT", new_y="TOP")
+  pdf.cell(56, 6, f"EUR  {val_imb:,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
+  pdf.ln(4)
+
+  # 3. Prodotti Finiti
+  pdf.set_font("Helvetica", "B", 10)
+  pdf.cell(186, 7, " 3. PRODOTTI FINITI (Birra Confezionata)", new_x="LMARGIN", new_y="NEXT", fill=True)
+  pdf.set_font("Helvetica", "", 9)
+  pdf.multi_cell(186, 5, f"Volume a magazzino: {litri_pf:.1f} Litri condizionati in fusti e bottiglie.\n- Quota Costo Industriale di Produzione: EUR {costo_ind:,.2f}\n- Quota Accisa Dovuta/Assolta liquidata alla produzione: EUR {accisa_pf:,.2f}")
   pdf.set_font("Helvetica", "I", 8)
-  pdf.multi_cell(0, 4, "Nota per il bilancio: Ai sensi del D.Lgs. 504/95 e D.M. 138/2019 per i microbirrifici privi di deposito fiscale sospensivo, l'accisa e' liquidata all'immissione in consumo/condizionamento e costituisce costo accessorio certo incorporato nel valore delle giacenze.")
-  pdf.set_font("Helvetica", "B", 10)
-  pdf.cell(140, 6, "Valore Fiscale Prodotti Finiti al 31/12:")
-  pdf.cell(50, 6, f"EUR  {val_pf:,.2f}", align="R", ln=True)
+  pdf.multi_cell(186, 4, "Nota per il bilancio: Ai sensi del D.Lgs. 504/95 e D.M. 138/2019 per i microbirrifici privi di deposito fiscale sospensivo, l'accisa e' assolta/liquidata alla produzione e costituisce costo accessorio certo incorporato nel valore delle giacenze rimaste invendute.")
+  pdf.set_font("Helvetica", "B", 9)
+  pdf.cell(130, 6, "Valore Fiscale Prodotti Finiti al 31/12:", new_x="RIGHT", new_y="TOP")
+  pdf.cell(56, 6, f"EUR  {val_pf:,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
   pdf.ln(6)
 
-  # Box Totale Finale
-  pdf.set_draw_color(0, 0, 0)
-  pdf.set_fill_color(225, 235, 250)
-  pdf.rect(10, pdf.get_y(), 190, 16, "DF")
-  pdf.set_font("Helvetica", "B", 12)
-  pdf.set_xy(12, pdf.get_y() + 4)
-  pdf.cell(120, 8, "TOTALE RIMANENZE FINALI AL 31/12 (BILANCIO):")
-  pdf.cell(65, 8, f"EUR  {tot_bilancio:,.2f}", align="R", ln=True)
-  pdf.ln(15)
+  # Box Totale
+  cur_y = pdf.get_y()
+  pdf.set_draw_color(50, 90, 160)
+  pdf.set_fill_color(230, 240, 255)
+  pdf.rect(12, cur_y, 186, 14, "DF")
+  pdf.set_xy(16, cur_y + 3)
+  pdf.set_font("Helvetica", "B", 11)
+  pdf.cell(115, 8, "TOTALE RIMANENZE FINALI DI BILANCIO AL 31/12:", new_x="RIGHT", new_y="TOP")
+  pdf.cell(63, 8, f"EUR  {tot_bilancio:,.2f}", align="R", new_x="LMARGIN", new_y="NEXT")
+  pdf.ln(12)
 
   # Firme
   pdf.set_font("Helvetica", "", 9)
-  pdf.cell(90, 5, "Data: 31/12/2026", ln=False)
-  pdf.cell(100, 5, "Firma del Titolare / Legale Rappresentante", align="R", ln=True)
-  pdf.ln(8)
-  pdf.cell(90, 5, "_______________________", ln=False)
-  pdf.cell(100, 5, "____________________________________", align="R", ln=True)
+  pdf.cell(93, 5, "Data: 31/12/2026", new_x="RIGHT", new_y="TOP")
+  pdf.cell(93, 5, "Firma Legale Rappresentante", align="R", new_x="LMARGIN", new_y="NEXT")
+  pdf.ln(6)
+  pdf.cell(93, 5, "_______________________", new_x="RIGHT", new_y="TOP")
+  pdf.cell(93, 5, "____________________________________", align="R", new_x="LMARGIN", new_y="NEXT")
 
   return bytes(pdf.output())
 
@@ -242,7 +245,7 @@ st.divider()
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📥 Carico XML / Acquisti",
-    "🏷️️ Imballaggi",
+    "🏷️ Imballaggi",
     "⚗️ Cotta (Mosto)",
     "📦 Confezionamento",
     "🚚 Vendita / Scarico",
@@ -533,7 +536,6 @@ with tab7:
     ### 💰 **TOTALE RIMANENZE FINALI DI BILANCIO AL 31/12: € {totale_bilancio_complessivo:,.2f}**
     """)
 
-  # Generazione PDF
   pdf_bytes = genera_pdf_commercialista(
       valore_tot_mp,
       valore_tot_imb,

@@ -117,17 +117,17 @@ def genera_pdf_commercialista(val_mp, val_imb, val_pf, tot_bilancio, malto, lupp
 
   pdf.set_font("Helvetica", "I", 9)
   pdf.cell(180, 5, "Chiusura Esercizio Fiscale - Rilevazione Consistenze e Valutazioni", align="C", ln=1)
-  pdf.ln(3)
+  pdf.ln(4)
 
   pdf.set_font("Helvetica", "B", 9)
-  pdf.cell(180, 5, "Attivita': Fabbricazione di birra (Microbirrificio art. 35, c. 3-bis D.Lgs. 504/95)", ln=1)
+  pdf.cell(180, 5, "Attività: Birrificio", ln=1)
   pdf.set_font("Helvetica", "", 9)
-  pdf.cell(180, 5, "Destinatario: Studio Commerciale / Collegio Sindacale", ln=1)
-  pdf.ln(2)
+  pdf.cell(180, 5, "Destinatario: Studio Commerciale", ln=1)
+  pdf.ln(3)
 
   pdf.set_draw_color(180, 180, 180)
   pdf.line(15, pdf.get_y(), 195, pdf.get_y())
-  pdf.ln(4)
+  pdf.ln(6)
 
   # SEZIONE 1: MATERIE PRIME
   pdf.set_fill_color(240, 242, 245)
@@ -135,63 +135,54 @@ def genera_pdf_commercialista(val_mp, val_imb, val_pf, tot_bilancio, malto, lupp
   pdf.cell(180, 7, " 1. MATERIE PRIME IN GIACENZA", fill=True, ln=1)
 
   pdf.set_font("Helvetica", "", 9)
-  pdf.multi_cell(180, 4.5, f"Consistenze: Malto amidaceo ({malto:.1f} kg), Luppoli ({luppolo:.2f} kg), Lieviti ({lievito:.2f} kg).\nCriterio di valutazione: Valutate al costo effettivo di acquisto da fatture fornitori, al netto di IVA.")
+  pdf.multi_cell(180, 5, f"Consistenze: Malto amidaceo ({malto:.1f} kg), Luppoli ({luppolo:.2f} kg), Lieviti ({lievito:.2f} kg).\nValutate al costo effettivo di acquisto, al netto di IVA.")
 
-  y_box1 = pdf.get_y() + 1
-  pdf.set_xy(15, y_box1)
   pdf.set_font("Helvetica", "B", 9)
   pdf.cell(120, 6, "Valore Fiscale Materie Prime al 31/12:")
   pdf.cell(60, 6, f"EUR  {val_mp:,.2f}", align="R", ln=1)
-  pdf.ln(3)
+  pdf.ln(6)
 
   # SEZIONE 2: IMBALLAGGI
   pdf.set_font("Helvetica", "B", 10)
   pdf.cell(180, 7, " 2. IMBALLAGGI IN GIACENZA", fill=True, ln=1)
 
   pdf.set_font("Helvetica", "", 9)
-  pdf.multi_cell(180, 4.5, "Composizione: Scorte di bottiglie vuote (0.33L/0.75L), fusti vuoti, tappi a corona, scatole ed etichette.\nCriterio di valutazione: Valutati al costo di acquisto fatturato, al netto di IVA.")
+  pdf.multi_cell(180, 5, "Composizione: Scorte di bottiglie vuote, fusti, tappi a corona, scatole ed etichette.\nValutati al costo di acquisto, al netto di IVA.")
 
-  y_box2 = pdf.get_y() + 1
-  pdf.set_xy(15, y_box2)
   pdf.set_font("Helvetica", "B", 9)
   pdf.cell(120, 6, "Valore Fiscale Imballaggi al 31/12:")
   pdf.cell(60, 6, f"EUR  {val_imb:,.2f}", align="R", ln=1)
-  pdf.ln(3)
+  pdf.ln(6)
 
-  # SEZIONE 3: PRODOTTI FINITI
+  # SEZIONE 3: PRODOTTI FINITI (BIRRA CONFEZIONATA)
   pdf.set_font("Helvetica", "B", 10)
   pdf.cell(180, 7, " 3. PRODOTTI FINITI (Birra Confezionata)", fill=True, ln=1)
 
   pdf.set_font("Helvetica", "", 9)
-  pdf.multi_cell(180, 4.5, f"Volume a magazzino: {litri_pf:.1f} Litri condizionati in fusti e bottiglie.\n- Quota Costo Industriale di Produzione: EUR {costo_ind:,.2f}\n- Quota Accisa Dovuta/Assolta liquidata alla produzione: EUR {accisa_pf:,.2f}")
+  pdf.multi_cell(180, 5, f"Volume totale a magazzino: {litri_pf:.1f} Litri confezionati in fusti e bottiglie.")
 
-  pdf.set_font("Helvetica", "I", 8)
-  pdf.multi_cell(180, 3.8, "Nota per il bilancio: Ai sensi dell'art. 35 D.Lgs. 504/95 e D.M. 138/2019 per i microbirrifici privi di deposito fiscale sospensivo, l'accisa e' assolta/liquidata alla produzione e costituisce costo accessorio certo incorporato nel valore delle giacenze rimaste invendute.")
-
-  y_box3 = pdf.get_y() + 1
-  pdf.set_xy(15, y_box3)
   pdf.set_font("Helvetica", "B", 9)
   pdf.cell(120, 6, "Valore Fiscale Prodotti Finiti al 31/12:")
   pdf.cell(60, 6, f"EUR  {val_pf:,.2f}", align="R", ln=1)
-  pdf.ln(4)
+  pdf.ln(8)
 
   # BOX TOTALE GENERALE
   y_tot = pdf.get_y()
   pdf.set_draw_color(40, 80, 150)
   pdf.set_fill_color(230, 240, 255)
-  pdf.rect(15, y_tot, 180, 12, "DF")
-  pdf.set_xy(18, y_tot + 2)
+  pdf.rect(15, y_tot, 180, 13, "DF")
+  pdf.set_xy(18, y_tot + 2.5)
   pdf.set_font("Helvetica", "B", 11)
   pdf.cell(115, 8, "TOTALE RIMANENZE FINALI DI BILANCIO AL 31/12:")
   pdf.cell(57, 8, f"EUR  {tot_bilancio:,.2f}", align="R", ln=1)
-  pdf.ln(12)
+  pdf.ln(16)
 
   # FIRME
   pdf.set_font("Helvetica", "", 9)
   pdf.set_x(15)
   pdf.cell(90, 5, "Data: 31/12/2026")
-  pdf.cell(90, 5, "Firma Legale Rappresentante", align="R", ln=1)
-  pdf.ln(6)
+  pdf.cell(90, 5, "Firma Titolare", align="R", ln=1)
+  pdf.ln(8)
   pdf.set_x(15)
   pdf.cell(90, 5, "_______________________")
   pdf.cell(90, 5, "____________________________________", align="R", ln=1)
@@ -418,7 +409,7 @@ with tab4:
     )
     qta_c = st.number_input("Pezzi Prodotti", min_value=1, step=1)
     costo_prod_lt = st.number_input(
-        "Mero Costo Industriale Produzione (€/Litro)",
+        "Costo Unitario Produzione (€/Litro)",
         min_value=0.1,
         value=1.10,
         step=0.05,
@@ -509,9 +500,9 @@ with tab6:
     st.write("#### Registro Birra Condizionata (Allegato III)")
     st.dataframe(pd.read_sql_query("SELECT * FROM birra_condizionata", conn), width="stretch")
 
-# TAB 7: REPORT 31/12 (ANTEPRIMA TABELLE + SCARICO PDF)
+# TAB 7: REPORT 31/12 (TABELLE + DOWNLOAD PDF PULITO)
 with tab7:
-  st.subheader("📑 Riepilogo Ufficiale al 31 Dicembre per Commercialista")
+  st.subheader("📑 Riepilogo al 31 Dicembre")
 
   costo_kg_m = 1.35
   costo_kg_l = 28.00
@@ -525,12 +516,12 @@ with tab7:
   # 1. ANTEPRIMA MATERIE PRIME
   st.markdown("### 🌾 1. Materie Prime in Giacenza")
   df_mp_anteprima = pd.DataFrame([
-      {"Articolo": "Malto Amidaceo", "Giacenza Fisica (kg)": f"{malto:.2f}", "Costo Unitario Medio (€/kg)": f"{costo_kg_m:.2f}", "Valore Totale (€)": round(val_m, 2)},
-      {"Articolo": "Luppoli (T90)", "Giacenza Fisica (kg)": f"{luppolo:.2f}", "Costo Unitario Medio (€/kg)": f"{costo_kg_l:.2f}", "Valore Totale (€)": round(val_l, 2)},
-      {"Articolo": "Lieviti", "Giacenza Fisica (kg)": f"{lievito:.2f}", "Costo Unitario Medio (€/kg)": f"{costo_kg_y:.2f}", "Valore Totale (€)": round(val_y, 2)},
+      {"Articolo": "Malto Amidaceo", "Giacenza Fisica (kg)": f"{malto:.2f}", "Costo Unitario (€/kg)": f"{costo_kg_m:.2f}", "Valore Totale (€)": round(val_m, 2)},
+      {"Articolo": "Luppoli", "Giacenza Fisica (kg)": f"{luppolo:.2f}", "Costo Unitario (€/kg)": f"{costo_kg_l:.2f}", "Valore Totale (€)": round(val_l, 2)},
+      {"Articolo": "Lieviti", "Giacenza Fisica (kg)": f"{lievito:.2f}", "Costo Unitario (€/kg)": f"{costo_kg_y:.2f}", "Valore Totale (€)": round(val_y, 2)},
   ])
   st.dataframe(df_mp_anteprima, width="stretch")
-  st.info(f"**Subtotale Materie Prime (escl. IVA): € {valore_tot_mp:,.2f}**")
+  st.info(f"**Subtotale Materie Prime: € {valore_tot_mp:,.2f}**")
 
   # 2. ANTEPRIMA IMBALLAGGI
   st.markdown("### 📦 2. Imballaggi in Giacenza")
@@ -539,48 +530,47 @@ with tab7:
         SELECT 
             articolo as "Articolo Imballaggio",
             SUM(CASE WHEN tipo_movimento='CARICO' THEN quantita ELSE -quantita END) as "Giacenza (pz)",
-            ROUND(MAX(costo_unitario), 3) as "Costo Acquisto Unitario (€)",
+            ROUND(MAX(costo_unitario), 3) as "Costo Unitario (€)",
             ROUND(SUM(CASE WHEN tipo_movimento='CARICO' THEN quantita ELSE -quantita END) * MAX(costo_unitario), 2) as "Valore Totale (€)"
         FROM imballaggi
         GROUP BY articolo
     """, conn)
   valore_tot_imb = df_imb_anteprima["Valore Totale (€)"].sum() if not df_imb_anteprima.empty else 0.0
   st.dataframe(df_imb_anteprima, width="stretch")
-  st.info(f"**Subtotale Imballaggi (escl. IVA): € {valore_tot_imb:,.2f}**")
+  st.info(f"**Subtotale Imballaggi: € {valore_tot_imb:,.2f}**")
 
-  # 3. ANTEPRIMA PRODOTTI FINITI / DEPOSITO FISCALE
-  st.markdown("### 🍺 3. Prodotti Finiti (Deposito Fiscale)")
+  # 3. ANTEPRIMA PRODOTTI FINITI
+  st.markdown("### 🍺 3. Prodotti Finiti")
   with sqlite3.connect(DB_FILE) as conn:
     df_pf_anteprima = pd.read_sql_query("""
         SELECT 
             formato as "Formato",
             SUM(CASE WHEN tipo='CARICO' THEN quantita ELSE -quantita END) as "Giacenza (pz)",
             ROUND(SUM(CASE WHEN tipo='CARICO' THEN litri_totali ELSE -litri_totali END), 1) as "Litri Totali",
-            ROUND(AVG(grado_plato), 1) as "Plato Medio",
-            ROUND(SUM(CASE WHEN tipo='CARICO' THEN (litri_totali * costo_produzione_litro) ELSE -(litri_totali * costo_produzione_litro) END), 2) as "Costo Industriale (€)",
-            ROUND(SUM(CASE WHEN tipo='CARICO' THEN (litri_totali * grado_plato / 100.0 * ?) ELSE -(litri_totali * grado_plato / 100.0 * ?) END), 2) as "Accisa Assolta (€)",
-            ROUND(SUM(CASE WHEN tipo='CARICO' THEN (litri_totali * costo_produzione_litro + litri_totali * grado_plato / 100.0 * ?) ELSE -(litri_totali * costo_produzione_litro + litri_totali * grado_plato / 100.0 * ?) END), 2) as "Valore Complessivo Fiscale (€)"
+            ROUND(SUM(CASE WHEN tipo='CARICO' THEN (litri_totali * costo_produzione_litro) ELSE -(litri_totali * costo_produzione_litro) END), 2) as "Costo Produzione (€)",
+            ROUND(SUM(CASE WHEN tipo='CARICO' THEN (litri_totali * grado_plato / 100.0 * ?) ELSE -(litri_totali * grado_plato / 100.0 * ?) END), 2) as "Quota Accisa (€)",
+            ROUND(SUM(CASE WHEN tipo='CARICO' THEN (litri_totali * costo_produzione_litro + litri_totali * grado_plato / 100.0 * ?) ELSE -(litri_totali * costo_produzione_litro + litri_totali * grado_plato / 100.0 * ?) END), 2) as "Valore Fiscale (€)"
         FROM birra_condizionata
         GROUP BY formato
     """, conn, params=(ALIQUOTA_ACCISA_PLATO, ALIQUOTA_ACCISA_PLATO, ALIQUOTA_ACCISA_PLATO, ALIQUOTA_ACCISA_PLATO))
 
   litri_pf_val = df_pf_anteprima["Litri Totali"].sum() if not df_pf_anteprima.empty else 0.0
-  costo_ind_val = df_pf_anteprima["Costo Industriale (€)"].sum() if not df_pf_anteprima.empty else 0.0
-  accisa_assolta_val = df_pf_anteprima["Accisa Assolta (€)"].sum() if not df_pf_anteprima.empty else 0.0
-  valore_tot_pf = df_pf_anteprima["Valore Complessivo Fiscale (€)"].sum() if not df_pf_anteprima.empty else 0.0
+  costo_ind_val = df_pf_anteprima["Costo Produzione (€)"].sum() if not df_pf_anteprima.empty else 0.0
+  accisa_assolta_val = df_pf_anteprima["Quota Accisa (€)"].sum() if not df_pf_anteprima.empty else 0.0
+  valore_tot_pf = df_pf_anteprima["Valore Fiscale (€)"].sum() if not df_pf_anteprima.empty else 0.0
 
   st.dataframe(df_pf_anteprima, width="stretch")
-  st.info(f"**Subtotale Prodotti Finiti: € {valore_tot_pf:,.2f}** (Costo Industriale: € {costo_ind_val:,.2f} + Accisa Assolta: € {accisa_assolta_val:,.2f})")
+  st.info(f"**Subtotale Prodotti Finiti: € {valore_tot_pf:,.2f}**")
 
   # TOTALE GENERALE
   totale_bilancio_complessivo = valore_tot_mp + valore_tot_imb + valore_tot_pf
 
   st.divider()
   st.markdown(f"""
-    ### 💰 **TOTALE RIMANENZE FINALI DI BILANCIO AL 31/12: € {totale_bilancio_complessivo:,.2f}**
+    ### 💰 **TOTALE RIMANENZE FINALI AL 31/12: € {totale_bilancio_complessivo:,.2f}**
     * **Materie Prime:** € {valore_tot_mp:,.2f}
     * **Imballaggi:** € {valore_tot_imb:,.2f}
-    * **Prodotti Finiti:** € {valore_tot_pf:,.2f} *(inclusa accisa assolta sui litri rimasti)*
+    * **Prodotti Finiti:** € {valore_tot_pf:,.2f}
   """)
 
   pdf_bytes = genera_pdf_commercialista(

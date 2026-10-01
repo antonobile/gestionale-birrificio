@@ -105,13 +105,11 @@ init_db()
 
 
 def genera_pdf_commercialista(val_mp, val_imb, val_pf, tot_bilancio, malto, luppolo, lievito, litri_pf, costo_ind, accisa_pf):
-  # Formato Orizzontale (Landscape A4: 297 mm larghezza, 210 mm altezza)
   pdf = FPDF(orientation="L", unit="mm", format="A4")
   pdf.set_auto_page_break(auto=False)
   pdf.add_page()
   pdf.set_margins(15, 12, 15)
 
-  # Titolo e Dati Aziendali
   pdf.set_font("Helvetica", "B", 15)
   pdf.set_xy(15, 12)
   pdf.cell(267, 8, "PROSPETTO RIMANENZE DI MAGAZZINO AL 31/12", align="C", ln=1)
@@ -213,13 +211,26 @@ def estrai_da_descrizione(desc: str, qta_pz: float):
   else:
     kg = qta_pz
 
-  if any(k in d for k in ["MALTO", "PILSNER", "WEYERMANN", "FRUMENTO", "ZUCCHERO"]):
+  if any(k in d for k in ["MALTO", "PILSNER", "WEYERMANN", "FRUMENTO", "ZUCCHERO", "PALE", "CARA"]):
     return ("MALTO", kg)
-  if any(k in d for k in ["LUPPOLO", "T90", "MAGNUM", "PERLE", "MOSAIC"]):
+  if any(k in d for k in ["LUPPOLO", "T90", "MAGNUM", "PERLE", "MOSAIC", "CASCADE", "CITRA", "SAAZ"]):
     return ("LUPPOLO", kg)
-  if "LIEVITO" in d or "FERMENTO" in d:
+  if "LIEVITO" in d or "FERMENTO" in d or "YEAST" in d:
     return ("LIEVITO", kg)
   return ("ALTRO", 0.0)
+
+
+def trova_testo_nodo(elemento, tags):
+  """Trova il testo del primo tag corrispondente ignorando i namespace XML."""
+  if elemento is None:
+    return ""
+  for tag in tags:
+    for el in elemento.iter():
+      # Rimuove il namespace es. {http://...}Tag -> Tag
+      tag_pulito = el.tag.split("}")[-1] if "}" in el.tag else el.tag
+      if tag_pulito.lower() == tag.lower() and el.text:
+        return el.text.strip()
+  return ""
 
 
 st.title("🍺 Gestionale Birrificio & Registri Fiscali")
@@ -270,49 +281,94 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📑 Report 31/12 Commercialista",
 ])
 
-# TAB 1: XML
+# TAB 1: CARICO XML MULTIPLO E ROBUSTO
 with tab1:
-  st.subheader("Carico Automatico da Fattura XML")
-  up_xml = st.file_uploader("Trascina file XML fattura", type=["xml"])
+  st.subheader("Carico Fatture XML Fornitori (Caricamento Singolo o Multiplo)")
+  up_xmls = st.file_uploader(
+      "Trascina qui uno o più file XML delle fatture",
+      type=["xml"],
+      accept_multiple_files=True,
+  )
   c_medio = st.number_input(
       "Costo medio acquisto stimato (€/kg)", value=1.40, step=0.1
   )
-  if up_xml and st.button("Analizza e Registra Fattura"):
-    content = up_xml.read()
-    root = ET.fromstring(content)
-    cedente = root.find(".//DatiAnagraficiCedente//Denominazione")
-    mittente = (
-        cedente.text
-        if cedente is not None
-        else root.find(".//DatiAnagraficiCedente//Cognome").text
-    )
-    dati_doc = root.find(".//DatiGeneraliDocumento")
-    num_doc = dati_doc.find("Numero").text if dati_doc.find("Numero") is not None else ""
-    data_doc = dati_doc.find("Data").text if dati_doc.find("Data") is not None else ""
 
-    t_m, t_l, t_y = 0.0, 0.0, 0.0
-    for linea in root.findall(".//DettaglioLinee"):
-      desc = linea.find("Descrizione").text if linea.find("Descrizione") is not None else ""
-      qta = float(linea.find("Quantita").text) if linea.find("Quantita") is not None else 0.0
-      tipo, p = estrai_da_descrizione(desc, qta)
-      if tipo == "MALTO":
-        t_m += p
-      elif tipo == "LUPPOLO":
-        t_l += p
-      elif tipo == "LIEVITO":
-        t_y += p
+  if up_xmls and st.button("Analizza e Registra Tutte le Fatture"):
+    fatture_caricate = 0
+    tot_m, tot_l, tot_y = 0.0, 0.0, 0.0
 
     with sqlite3.connect(DB_FILE) as conn:
       c = conn.cursor()
-      c.execute(
-          """
-                INSERT INTO materie_prime (tipo, data, riferimento, azienda, malto_kg, luppolo_kg, lievito_kg, costo_kg_medio)
-                VALUES ('CARICO', ?, ?, ?, ?, ?, ?, ?)
-            """,
-          (data_doc, f"Fatt. {num_doc}", mittente, t_m, t_l, t_y, c_medio),
-      )
-      conn.commit()
-    st.success(f"Registrato da {mittente}: {t_m} kg Malto, {t_l} kg Luppolo, {t_y} kg Lievito.")
+      for up_xml in up_xmls:
+        try:
+          content = up_xml.read()
+          root = ET.fromstring(content)
+
+          # Ricerca flessibile del Fornitore (Cedente)
+          cedente_node = None
+          for el in root.iter():
+            tag_p = el.tag.split("}")[-1] if "}" in el.tag else el.tag
+            if tag_p == "DatiAnagraficiCedente":
+              cedente_node = el
+              break
+
+          mittente = ""
+          if cedente_node is not None:
+            denominazione = trova_testo_nodo(cedente_node, ["Denominazione"])
+            nome = trova_testo_nodo(cedente_node, ["Nome"])
+            cognome = trova_testo_nodo(cedente_node, ["Cognome"])
+            if denominazione:
+              mittente = denominazione
+            elif cognome or nome:
+              mittente = f"{cognome} {nome}".strip()
+
+          if not mittente:
+            # Fallback su IdCodice o CodiceFiscale del fornitore o nome del file
+            cf = trova_testo_nodo(root, ["IdCodice", "CodiceFiscale"])
+            mittente = f"Fornitore {cf}" if cf else up_xml.name
+
+          # Ricerca Numero e Data Documento
+          num_doc = trova_testo_nodo(root, ["Numero"]) or "N.D."
+          data_doc = trova_testo_nodo(root, ["Data"]) or pd.Timestamp.now().strftime("%Y-%m-%d")
+
+          t_m, t_l, t_y = 0.0, 0.0, 0.0
+          # Analisi delle linee fattura
+          for el in root.iter():
+            tag_linea = el.tag.split("}")[-1] if "}" in el.tag else el.tag
+            if tag_linea == "DettaglioLinee":
+              desc = trova_testo_nodo(el, ["Descrizione"])
+              qta_str = trova_testo_nodo(el, ["Quantita"])
+              qta = float(qta_str.replace(",", ".")) if qta_str else 0.0
+
+              tipo, p = estrai_da_descrizione(desc, qta)
+              if tipo == "MALTO":
+                t_m += p
+              elif tipo == "LUPPOLO":
+                t_l += p
+              elif tipo == "LIEVITO":
+                t_y += p
+
+          c.execute(
+              """
+                    INSERT INTO materie_prime (tipo, data, riferimento, azienda, malto_kg, luppolo_kg, lievito_kg, costo_kg_medio)
+                    VALUES ('CARICO', ?, ?, ?, ?, ?, ?, ?)
+                """,
+              (data_doc, f"Fatt. {num_doc}", mittente, t_m, t_l, t_y, c_medio),
+          )
+          conn.commit()
+
+          fatture_caricate += 1
+          tot_m += t_m
+          tot_l += t_l
+          tot_y += t_y
+
+        except Exception as e:
+          st.error(f"Errore nella lettura del file {up_xml.name}: {e}")
+
+    st.success(
+        f"✅ Elaborate con successo {fatture_caricate} fatture! "
+        f"Aggiunti in magazzino: {tot_m:.1f} kg Malto, {tot_l:.2f} kg Luppolo, {tot_y:.2f} kg Lievito."
+    )
     st.rerun()
 
 # TAB 2: IMBALLAGGI

@@ -28,10 +28,8 @@ if not st.session_state["autenticato"]:
       st.error("Password errata. Riprova.")
   st.stop()
 
-# --- DATABASE SETUP ---
+# --- DATABASE SETUP & AUTO-MIGRAZIONE ---
 DB_FILE = "birrificio.db"
-
-# Aliquota accisa microbirrifici (40% riduzione: 1.794 € per ettolitro/Plato)
 ALIQUOTA_ACCISA_PLATO = 1.794
 
 
@@ -76,7 +74,7 @@ def init_db():
                 lotto_sfuso TEXT
             )
         """)
-    # 4. Birra Condizionata / Prodotti Finiti
+    # 4. Birra Condizionata
     c.execute("""
             CREATE TABLE IF NOT EXISTS birra_condizionata (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,11 +85,24 @@ def init_db():
                 quantita INTEGER,
                 litri_totali REAL,
                 grado_plato REAL DEFAULT 12.0,
-                costo_produzione_litro REAL DEFAULT 1.20,
+                costo_produzione_litro REAL DEFAULT 1.10,
                 documento_rif TEXT
             )
         """)
     conn.commit()
+
+    # Migrazione colonne se il DB esisteva già con schema precedente
+    def aggiungi_colonna_se_manca(tabella, colonna, tipo_sql):
+      c.execute(f"PRAGMA table_info({tabella})")
+      colonne = [info[1] for info in c.fetchall()]
+      if colonna not in colonne:
+        c.execute(f"ALTER TABLE {tabella} ADD COLUMN {colonna} {tipo_sql}")
+        conn.commit()
+
+    aggiungi_colonna_se_manca("imballaggi", "costo_unitario", "REAL DEFAULT 0.0")
+    aggiungi_colonna_se_manca("materie_prime", "costo_kg_medio", "REAL DEFAULT 1.40")
+    aggiungi_colonna_se_manca("birra_condizionata", "costo_produzione_litro", "REAL DEFAULT 1.10")
+    aggiungi_colonna_se_manca("birra_condizionata", "grado_plato", "REAL DEFAULT 12.0")
 
 
 init_db()
@@ -284,7 +295,7 @@ with tab2:
         """,
         conn,
     )
-    st.dataframe(df_imb, use_container_width=True)
+    st.dataframe(df_imb, width="stretch")
 
 # TAB 3: COTTA
 with tab3:
@@ -371,7 +382,6 @@ with tab4:
             ),
         )
 
-        # Scarico automatico degli imballaggi
         if "Bottiglia" in fmt:
           art_bot = (
               "Bottiglie 0.33L vuote"
@@ -455,19 +465,19 @@ with tab6:
         """,
         conn,
     )
-    st.dataframe(df_pf, use_container_width=True)
+    st.dataframe(df_pf, width="stretch")
 
     st.write("---")
     st.write("#### Registro Mosto (Allegato I)")
     st.dataframe(
         pd.read_sql_query("SELECT * FROM registro_mosto", conn),
-        use_container_width=True,
+        width="stretch",
     )
 
     st.write("#### Registro Birra Condizionata (Allegato III)")
     st.dataframe(
         pd.read_sql_query("SELECT * FROM birra_condizionata", conn),
-        use_container_width=True,
+        width="stretch",
     )
 
 # TAB 7: REPORT 31/12 COMMERCIALISTA
@@ -509,7 +519,6 @@ with tab7:
 
   totale_bilancio_complessivo = valore_tot_mp + valore_tot_imb + valore_tot_pf
 
-  # Visualizzazione formattata richiesta
   st.markdown(f"""
     ### **Valori di Riepilogo al 31 Dicembre:**
 
@@ -527,7 +536,6 @@ with tab7:
     ### 💰 **TOTALE RIMANENZE FINALI DI BILANCIO AL 31/12: € {totale_bilancio_complessivo:,.2f}**
     """)
 
-  # Tabella per export CSV
   dati_export = [
       {
           "Macro-Voce": "MATERIE PRIME",
@@ -566,7 +574,7 @@ with tab7:
   ]
 
   df_exp = pd.DataFrame(dati_export)
-  st.dataframe(df_exp, use_container_width=True)
+  st.dataframe(df_exp, width="stretch")
 
   csv_out = io.StringIO()
   df_exp.to_csv(csv_out, index=False)

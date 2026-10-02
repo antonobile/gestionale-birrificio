@@ -26,7 +26,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Tag PWA e Favicon per browser e desktop
 st.markdown(
     """
     <head>
@@ -168,7 +167,7 @@ def init_db():
                 );
             """)
 
-            # Aggiunta colonne opzionali
+            # Aggiunta colonne opzionali se non esistenti
             c.execute("ALTER TABLE materie_prime ADD COLUMN IF NOT EXISTS azienda_id BIGINT DEFAULT 1;")
             c.execute("ALTER TABLE imballaggi ADD COLUMN IF NOT EXISTS azienda_id BIGINT DEFAULT 1;")
             c.execute("ALTER TABLE registro_mosto ADD COLUMN IF NOT EXISTS azienda_id BIGINT DEFAULT 1;")
@@ -181,16 +180,12 @@ def init_db():
             c.execute("ALTER TABLE registro_mosto ADD COLUMN IF NOT EXISTS accisa_dovuta_euro NUMERIC DEFAULT 0;")
             c.execute("ALTER TABLE registro_mosto ADD COLUMN IF NOT EXISTS costo_totale_cotta NUMERIC DEFAULT 0;")
             c.execute("ALTER TABLE registro_mosto ADD COLUMN IF NOT EXISTS costo_litro_mosto NUMERIC DEFAULT 0;")
+            c.execute("ALTER TABLE materie_prime ADD COLUMN IF NOT EXISTS costo_malto_kg NUMERIC DEFAULT 1.40;")
+            c.execute("ALTER TABLE materie_prime ADD COLUMN IF NOT EXISTS costo_luppolo_kg NUMERIC DEFAULT 28.00;")
+            c.execute("ALTER TABLE materie_prime ADD COLUMN IF NOT EXISTS costo_lievito_kg NUMERIC DEFAULT 65.00;")
             c.execute("ALTER TABLE scadenze_accise ADD COLUMN IF NOT EXISTS codice_tributo TEXT DEFAULT '2803';")
 
-            # Allineamento record storici a ID 1
-            c.execute("UPDATE materie_prime SET azienda_id=1 WHERE azienda_id IS NULL;")
-            c.execute("UPDATE imballaggi SET azienda_id=1 WHERE azienda_id IS NULL;")
-            c.execute("UPDATE registro_mosto SET azienda_id=1 WHERE azienda_id IS NULL;")
-            c.execute("UPDATE birra_condizionata SET azienda_id=1 WHERE azienda_id IS NULL;")
-            c.execute("UPDATE scadenze_accise SET azienda_id=1 WHERE azienda_id IS NULL;")
-
-            # Account principale Birrificio Nobile
+            # Inizializza utente principale predefinito
             c.execute("SELECT id FROM aziende WHERE id=1;")
             if not c.fetchone():
                 c.execute("""
@@ -217,7 +212,7 @@ if not st.session_state["autenticato"]:
     with col_l2:
         if os.path.exists(LOGO_FILENAME):
             st.image(LOGO_FILENAME, width=120)
-        st.title("🔒 BrewDesk — Accesso & Registrazione")
+        st.title("🔒 BrewDesk — Accesso Piattaforma")
         
         tab_login, tab_registra = st.tabs(["🔑 Accedi", "📝 Registra Nuovo Birrificio"])
 
@@ -247,21 +242,21 @@ if not st.session_state["autenticato"]:
                                 st.session_state["stato_sub"] = user[3]
                                 st.rerun()
                             else:
-                                st.error("Email o Password non validi. Riprova.")
+                                st.error("Credenziali non valide. Riprova.")
 
         with tab_registra:
-            st.markdown("#### Registra la tua Azienda su BrewDesk")
+            st.markdown("#### Crea il tuo account su BrewDesk")
             with st.form("reg_form"):
                 r_nome = st.text_input("Ragione Sociale Birrificio *", placeholder="es. Birrificio Artigianale Srl")
                 r_piva = st.text_input("Partita IVA *", max_chars=16)
                 r_cf = st.text_input("Codice Fiscale", max_chars=16)
                 r_email = st.text_input("Email Amministrativa *")
                 r_pwd = st.text_input("Crea una Password *", type="password")
-                btn_reg = st.form_submit_button("Crea Account (Prova Gratuita)")
+                btn_reg = st.form_submit_button("Attiva Account Birrificio (Prova Gratuita)")
 
                 if btn_reg:
                     if not (r_nome and r_piva and r_email and r_pwd):
-                        st.error("Tutti i campi con * sono obbligatori.")
+                        st.error("I campi con * sono obbligatori.")
                     else:
                         try:
                             with get_db_connection() as conn:
@@ -271,9 +266,9 @@ if not st.session_state["autenticato"]:
                                         VALUES (%s, %s, %s, %s, %s, 'TRIAL');
                                     """, (r_nome, r_piva.strip(), r_cf.strip(), r_email.strip().lower(), hash_pwd(r_pwd)))
                                 conn.commit()
-                            st.success("Registrazione completata! Ora puoi effettuare il login dalla scheda 'Accedi'.")
+                            st.success("Registrazione completata con successo! Ora accedi dalla scheda 'Accedi'.")
                         except Exception as e:
-                            st.error(f"Errore registrazione: Partita IVA o Email già presente ({e})")
+                            st.error(f"Errore registrazione: Partita IVA o Email già registrata ({e})")
     st.stop()
 
 # --- BARRA LATERALE CON BRANDING BREWDESK & STRIPE ---
@@ -287,7 +282,7 @@ st.sidebar.markdown(f"### **{RAGIONE_AZIENDA}**")
 st.sidebar.caption(f"P.IVA: `{PIVA_AZIENDA}`")
 
 if st.session_state.get("stato_sub") == "ATTIVO":
-    st.sidebar.success("✅ Abbonamento Attivo (14,90 €/m)")
+    st.sidebar.success("✅ Abbonamento SaaS Attivo (14,90 €/m)")
 else:
     st.sidebar.warning("⏳ Piano Prova Gratuita")
     st.sidebar.link_button("💳 Attiva Abbonamento (14,90 €/mese)", STRIPE_CHECKOUT_URL)
@@ -349,41 +344,25 @@ def trova_testo_nodo(elemento, tags):
 def estrai_da_descrizione(desc: str, qta_pz: float, prezzo_un: float = 0.0):
     d = desc.upper()
     kg_tot = qta_pz
-
     m_kg = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:KG|CHILI)", d)
     m_g = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:G|GR|GRAMMI)\b", d)
 
     if m_kg:
-        kg_singolo = float(m_kg.group(1).replace(",", "."))
-        kg_tot = kg_singolo * qta_pz
+        kg_tot = float(m_kg.group(1).replace(",", ".")) * qta_pz
     elif m_g:
-        kg_singolo = float(m_g.group(1).replace(",", ".")) / 1000.0
-        kg_tot = kg_singolo * qta_pz
+        kg_tot = (float(m_g.group(1).replace(",", ".")) / 1000.0) * qta_pz
 
     costo_reale_kg = (prezzo_un * qta_pz) / kg_tot if kg_tot > 0 and prezzo_un > 0 else 0.0
 
-    chiavi_lievito = [
-        "LIEVITO", "YEAST", "FERMENTO", "FERMENTIS", "SAFEBREW", "SAFBREW", 
-        "SAFALE", "SAFLAGER", "LALLEMAND", "BE-256", "BE256", "WB-06", "WB06", 
-        "S-04", "S04", "US-05", "US05", "T-58", "T58", "W-34/70", "M36"
-    ]
+    chiavi_lievito = ["LIEVITO", "YEAST", "FERMENTO", "FERMENTIS", "SAFEBREW", "SAFBREW", "SAFALE", "SAFLAGER", "LALLEMAND", "BE-256", "WB-06", "S-04", "US-05", "T-58"]
     if any(k in d for k in chiavi_lievito):
         return ("LIEVITO", kg_tot, costo_reale_kg)
 
-    chiavi_malto_fermentabili = [
-        "MALTO", "PILSNER", "WEYERMANN", "FRUMENTO", "PALE", "CARA", "CRYSTAL", 
-        "MONICH", "MUNICH", "ROASTED", "CHOCOLATE", "ORZO", "SPELT",
-        "ZUCCHERO CANDITO", "SUGAR CANDY", "CANDI SUGAR", "ZUCCHERO BRUNO", 
-        "ZUCCHERO BIANCO", "DESTROSIO", "ZUCCHERO"
-    ]
-    if any(k in d for k in chiavi_malto_fermentabili):
+    chiavi_malto = ["MALTO", "PILSNER", "WEYERMANN", "FRUMENTO", "PALE", "CARA", "CRYSTAL", "MUNICH", "ZUCCHERO CANDITO", "SUGAR CANDY", "CANDI SUGAR", "ZUCCHERO BRUNO", "DESTROSIO"]
+    if any(k in d for k in chiavi_malto):
         return ("MALTO", kg_tot, costo_reale_kg)
 
-    chiavi_luppolo = [
-        "LUPPOLO", "HOP", "T90", "T-90", "PELLETS", "MAGNUM", "PERLE", 
-        "MOSAIC", "CASCADE", "CITRA", "SAAZ", "STYRIAN", "GOLDING", 
-        "CENTENNIAL", "AMARILLO", "CHINOOK", "FUGGLE"
-    ]
+    chiavi_luppolo = ["LUPPOLO", "HOP", "T90", "T-90", "PELLETS", "MAGNUM", "PERLE", "MOSAIC", "CASCADE", "CITRA", "SAAZ", "STYRIAN", "GOLDING"]
     if any(k in d for k in chiavi_luppolo):
         return ("LUPPOLO", kg_tot, costo_reale_kg)
 
@@ -391,51 +370,146 @@ def estrai_da_descrizione(desc: str, qta_pz: float, prezzo_un: float = 0.0):
 
 def estrai_birra_da_vendita(desc: str):
     d = desc.upper()
-    if any(k in d for k in ["CAUZIONE", "TRASPORTO", "SPESE", "BICCHIER", "TEKU", "SPEDIZIONE", "NOLEGGIO"]):
+    if any(k in d for k in ["CAUZIONE", "TRASPORTO", "SPESE", "BICCHIER", "TEKU", "SPEDIZIONE"]):
         return None
-
-    if "30" in d and ("LT" in d or "LITR" in d or "FUST" in d or "POLYKEG" in d or "DOLIUM" in d):
-        return ("Fusto 30L", 30.0)
-    if "25" in d and ("LT" in d or "LITR" in d or "FUST" in d or "POLYKEG" in d or "DOLIUM" in d):
-        return ("Fusto 25L", 25.0)
-    if "24" in d and ("LT" in d or "LITR" in d or "FUST" in d or "POLYKEG" in d or "DOLIUM" in d):
-        return ("Fusto 24L", 24.0)
-    if "20" in d and ("LT" in d or "LITR" in d or "FUST" in d or "POLYKEG" in d or "DOLIUM" in d):
-        return ("Fusto 20L", 20.0)
-    if "FUST" in d:
-        return ("Fusto 30L", 30.0)
-
-    if "0.33" in d or "33CL" in d or "33 CL" in d or "0,33" in d or "33" in d:
+    for l, f in [(30, "Fusto 30L"), (25, "Fusto 25L"), (24, "Fusto 24L"), (20, "Fusto 20L"), (12, "Fusto 12L")]:
+        if str(l) in d and any(k in d for k in ["LT", "LITR", "FUST", "POLYKEG", "DOLIUM"]):
+            return (f, float(l))
+    if "0.33" in d or "33CL" in d or "33 CL" in d or "0,33" in d or "BOTT" in d:
         return ("Bottiglia 0.33L", 0.33)
-    if "0.75" in d or "75CL" in d or "75 CL" in d or "0,75" in d or "75" in d:
+    if "0.75" in d or "75CL" in d or "75 CL" in d or "0,75" in d:
         return ("Bottiglia 0.75L", 0.75)
-    if "BOTT" in d:
-        return ("Bottiglia 0.33L", 0.33)
-
-    if "BIRRA" in d:
-        return ("Bottiglia 0.33L", 0.33)
-
     return None
 
 def genera_file_ics(titolo, descrizione, data_scadenza):
     dt_str = data_scadenza.strftime("%Y%m%d")
     return f"""BEGIN:VCALENDAR
 VERSION:2.0
-PRODID:-//BrewDesk//Brewery Management//IT
-CALSCALE:GREGORIAN
+PRODID:-//BrewDesk//IT
 BEGIN:VEVENT
 SUMMARY:{titolo}
 DESCRIPTION:{descrizione}
 DTSTART;VALUE=DATE:{dt_str}
 DTEND;VALUE=DATE:{dt_str}
-BEGIN:VALARM
-ACTION:DISPLAY
-DESCRIPTION:{titolo}
-TRIGGER:-P1D
-END:VALARM
 END:VEVENT
 END:VCALENDAR""".encode("utf-8")
 
+# --- FUNZIONE BILANCIO FINANZIARIO DOGANE (ENTRO 31 GENNAIO) ---
+def genera_pdf_bilancio_dogane(anno, cotte_n, litri_cotte, mc_gpl, kwh_ele, 
+                               m_acq, m_usat, l_acq, l_usat, y_acq_g, y_usat_g, 
+                               b33, b75, f12, f20, f24, f25, f30,
+                               giac_m, giac_l, giac_y, giac_birra_lt, resa_media,
+                               ragione_soc, piva_az):
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_margins(15, 12, 15)
+
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(180, 8, "BILANCIO FINANZIARIO & DI MATERIA ANNUALE", align="C", ln=1)
+    pdf.set_font("Helvetica", "I", 9)
+    pdf.cell(180, 5, f"Rendicontazione Doganale Esercizio Fiscale {anno} (Comunicazione entro il 31 Gennaio)", align="C", ln=1)
+    pdf.ln(3)
+
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(110, 5, f"Ditta: {ragione_soc}", ln=0)
+    pdf.cell(70, 5, f"P.IVA / C.F.: {piva_az}", align="R", ln=1)
+    pdf.set_draw_color(160, 160, 160)
+    pdf.line(15, pdf.get_y() + 2, 195, pdf.get_y() + 2)
+    pdf.ln(4)
+
+    # 1. Volume di Birra Prodotta & Cotte
+    pdf.set_fill_color(235, 240, 248)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(180, 6, " 1. VOLUME DI BIRRA PRODOTTA & ATTIVITÀ DI SALA COTTURA", fill=True, ln=1)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(100, 6, f"Numero totale di cotte eseguite nell'anno {anno}:", border=1)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(80, 6, f"{cotte_n} cotte", align="R", border=1, ln=1)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(100, 6, "Volume complessivo di mosto/birra prodotto (Litri):", border=1)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(80, 6, f"{litri_cotte:,.1f} LT", align="R", border=1, ln=1)
+    pdf.ln(3)
+
+    # 2. Bilancio Energetico
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(180, 6, " 2. BILANCIO ENERGETICO (Combustibili ed Elettricità impiegati)", fill=True, ln=1)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(100, 6, "Consumo totale Gas GPL / Metano:", border=1)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(80, 6, f"{mc_gpl:,.2f} Smc (Standard mc)", align="R", border=1, ln=1)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(100, 6, "Consumo totale Energia Elettrica:", border=1)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(80, 6, f"{kwh_ele:,.1f} kWh", align="R", border=1, ln=1)
+    pdf.ln(3)
+
+    # 3. Bilancio di Materia
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(180, 6, " 3. BILANCIO DI MATERIA (Materie Prime Acquistate vs Utilizzate in Cotta)", fill=True, ln=1)
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.cell(70, 5, "Materia Prima", border=1, align="C", fill=True)
+    pdf.cell(55, 5, f"Acquistato nel {anno}", border=1, align="C", fill=True)
+    pdf.cell(55, 5, f"Impiegato in Cotta ({anno})", border=1, align="C", fill=True, ln=1)
+    
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(70, 6, "Malto d'orzo & fermentabili", border=1)
+    pdf.cell(55, 6, f"{m_acq:,.1f} kg", border=1, align="R")
+    pdf.cell(55, 6, f"{m_usat:,.1f} kg", border=1, align="R", ln=1)
+
+    pdf.cell(70, 6, "Luppolo", border=1)
+    pdf.cell(55, 6, f"{l_acq:,.2f} kg", border=1, align="R")
+    pdf.cell(55, 6, f"{l_usat:,.2f} kg", border=1, align="R", ln=1)
+
+    pdf.cell(70, 6, "Lievito", border=1)
+    pdf.cell(55, 6, f"{y_acq_g:,.0f} gr", border=1, align="R")
+    pdf.cell(55, 6, f"{y_usat_g:,.0f} gr", border=1, align="R", ln=1)
+    
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.cell(180, 5, f"Resa media ponderata di sala cottura rilevata nel ciclo produttivo: {resa_media:.1f}%", ln=1)
+    pdf.ln(2)
+
+    # 4. Birra Condizionata
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(180, 6, " 4. BIRRA CONDIZIONATA NEL CORSO DELL'ANNO (Presa in carico)", fill=True, ln=1)
+    pdf.set_font("Helvetica", "", 8)
+    
+    formati_list = [
+        ("N. Bottiglie da 0.33 L", b33, "pezzi"),
+        ("N. Bottiglie da 0.75 L", b75, "pezzi"),
+        ("N. Fusti da 12 L", f12, "fusti"),
+        ("N. Fusti da 20 L", f20, "fusti"),
+        ("N. Fusti da 24 L", f24, "fusti"),
+        ("N. Fusti da 25 L", f25, "fusti"),
+        ("N. Fusti da 30 L", f30, "fusti")
+    ]
+    for desc_fmt, qta_val, um in formati_list:
+        pdf.cell(100, 5, f" - {desc_fmt}:", border="L,R")
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.cell(80, 5, f"{qta_val:,} {um}", align="R", border="L,R", ln=1)
+        pdf.set_font("Helvetica", "", 8)
+    pdf.cell(180, 1, "", border="T", ln=1)
+    pdf.ln(2)
+
+    # 5. Inventario Fisico al 31/12
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(180, 6, f" 5. INVENTARIO FISICO DELLE ESISTENZE AL 31/12/{anno}", fill=True, ln=1)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.cell(180, 5, f" - Giacenza Materie Prime: Malto/Fermentabili ({giac_m:,.1f} kg) | Luppoli ({giac_l:,.2f} kg) | Lieviti ({giac_y*1000:,.0f} gr)", ln=1)
+    pdf.cell(180, 5, f" - Giacenza Birra Finita a Magazzino: {giac_birra_lt:,.1f} Litri", ln=1)
+    pdf.ln(5)
+
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(90, 5, f"Luogo e Data: __________________, 31/01/{int(anno)+1}", ln=0)
+    pdf.cell(90, 5, "Firma del Titolare / Rappresentante Fiscale", align="R", ln=1)
+    pdf.ln(5)
+    pdf.cell(90, 5, "___________________________________", ln=0)
+    pdf.cell(90, 5, "________________________________________", align="R", ln=1)
+
+    return bytes(pdf.output())
+
+# --- FUNZIONE REPORT COMMERCIALISTA ---
 def genera_pdf_commercialista(val_mp, val_imb, val_pf, tot_bilancio, malto, luppolo, lievito, litri_pf, costo_ind, accisa_pf, ragione_soc, piva_az):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=False)
@@ -447,7 +521,6 @@ def genera_pdf_commercialista(val_mp, val_imb, val_pf, tot_bilancio, malto, lupp
     pdf.cell(267, 8, "PROSPETTO RIMANENZE DI MAGAZZINO AL 31/12", align="C", ln=1)
 
     pdf.set_font("Helvetica", "I", 9)
-    pdf.set_x(15)
     pdf.cell(267, 5, "BrewDesk Platform - Rilevazione Consistenze e Valutazioni Fiscali", align="C", ln=1)
     pdf.ln(2)
 
@@ -545,73 +618,44 @@ st.divider()
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📥 Carico Acquisti XML",
-    "🏷️️ Imballaggi",
+    "🏷️ Imballaggi",
     "⚗️ Cotta & Sala Cottura",
     "📦 Confezionamento Misto",
     "🚚 Vendite (XML & Manuale)",
     "🏛️ Giacenze Magazzino",
     "⏰ Scadenze Accise (2803 / 2813)",
-    "📑 Report 31/12 Commercialista",
+    "📑 Report 31/12 & Bilancio Dogane",
 ])
 
 # TAB 1: CARICO ACQUISTI XML
 with tab1:
     st.subheader("Carico Automatico Materie Prime & Visore Costi da Fatture XML")
-    st.write("Trascina i file XML dei fornitori per caricare scorte e prezzi reali d'acquisto.")
-
-    up_xmls = st.file_uploader(
-        "Seleziona i file XML fornitori",
-        type=["xml"],
-        accept_multiple_files=True,
-        key="xml_acquisti",
-    )
-    c_medio = st.number_input(
-        "Costo medio stimato indicativo (€/kg)", value=1.40, step=0.1
-    )
+    up_xmls = st.file_uploader("Seleziona i file XML fornitori", type=["xml"], accept_multiple_files=True, key="xml_acquisti")
+    c_medio = st.number_input("Costo medio stimato indicativo (€/kg)", value=1.40, step=0.1)
 
     if up_xmls and st.button("Elabora Fatture Acquisto"):
-        carichi_mp = 0
-        tot_m, tot_l, tot_y = 0.0, 0.0, 0.0
-
+        carichi_mp, tot_m, tot_l, tot_y = 0, 0.0, 0.0, 0.0
         with get_db_connection() as conn:
             with conn.cursor() as c:
                 for up_xml in up_xmls:
                     try:
                         content = up_xml.read()
                         root = ET.fromstring(content)
-
-                        cedente_node = None
-                        for el in root.iter():
-                            tag_p = el.tag.split("}")[-1] if "}" in el.tag else el.tag
-                            if tag_p == "DatiAnagraficiCedente":
-                                cedente_node = el
-                                break
-
-                        mittente = ""
-                        if cedente_node is not None:
-                            denominazione = trova_testo_nodo(cedente_node, ["Denominazione"])
-                            cognome = trova_testo_nodo(cedente_node, ["Cognome"])
-                            nome = trova_testo_nodo(cedente_node, ["Nome"])
-                            mittente = denominazione if denominazione else f"{cognome} {nome}".strip()
-                        if not mittente:
-                            mittente = up_xml.name
-
+                        cedente = root.find(".//DatiAnagraficiCedente")
+                        mittente = trova_testo_nodo(cedente, ["Denominazione", "Cognome"]) if cedente is not None else up_xml.name
                         num_doc = trova_testo_nodo(root, ["Numero"]) or "N.D."
                         data_doc = trova_testo_nodo(root, ["Data"]) or pd.Timestamp.now().strftime("%Y-%m-%d")
                         rif_fattura = f"Fatt. {num_doc}"
 
                         c.execute("SELECT id FROM materie_prime WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL)) AND riferimento=%s AND azienda=%s LIMIT 1;", (AZIENDA_ID, AZIENDA_ID, rif_fattura, mittente))
-                        esiste = c.fetchone()
-                        if esiste:
-                            st.warning(f"⚠️ Documento XML N. {num_doc} ({mittente}) già caricato precedentemente! File saltato.")
+                        if c.fetchone():
+                            st.warning(f"⚠️ Documento XML N. {num_doc} ({mittente}) già caricato! Saltato.")
                             continue
 
                         t_m, t_l, t_y = 0.0, 0.0, 0.0
                         costo_m_kg, costo_l_kg, costo_y_kg = 1.40, 28.00, 65.00
-
                         for el in root.iter():
-                            tag_linea = el.tag.split("}")[-1] if "}" in el.tag else el.tag
-                            if tag_linea == "DettaglioLinee":
+                            if el.tag.split("}")[-1] == "DettaglioLinee":
                                 desc = trova_testo_nodo(el, ["Descrizione"])
                                 qta_str = trova_testo_nodo(el, ["Quantita"])
                                 qta = float(qta_str.replace(",", ".")) if qta_str else 0.0
@@ -629,17 +673,11 @@ with tab1:
                                     t_y += p
                                     if costo_effettivo > 0: costo_y_kg = costo_effettivo
 
-                        c.execute(
-                            """
+                        c.execute("""
                             INSERT INTO materie_prime (azienda_id, tipo, data, riferimento, azienda, malto_kg, luppolo_kg, lievito_kg, costo_malto_kg, costo_luppolo_kg, costo_lievito_kg, costo_kg_medio)
                             VALUES (%s, 'CARICO', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
-                            """,
-                            (AZIENDA_ID, data_doc, rif_fattura, mittente, t_m, t_l, t_y, costo_m_kg, costo_l_kg, costo_y_kg, c_medio),
-                        )
-                        carichi_mp += 1
-                        tot_m += t_m
-                        tot_l += t_l
-                        tot_y += t_y
+                        """, (AZIENDA_ID, data_doc, rif_fattura, mittente, t_m, t_l, t_y, costo_m_kg, costo_l_kg, costo_y_kg, c_medio))
+                        carichi_mp += 1; tot_m += t_m; tot_l += t_l; tot_y += t_y
                     except Exception as e:
                         st.error(f"Errore su {up_xml.name}: {e}")
                 conn.commit()
@@ -653,90 +691,39 @@ with tab1:
     st.markdown("#### 📋 Storico Movimentazioni & Costi Unitari Rilevati da XML")
     with get_db_connection() as conn:
         df_mp_mov = pd.read_sql_query("""
-            SELECT 
-                id, 
-                data as "Data", 
-                tipo as "Tipo Movimento", 
-                riferimento as "Riferimento", 
-                azienda as "Fornitore / Cotta", 
-                malto_kg as "Kg Malto/Zucchero", 
-                ROUND(costo_malto_kg::numeric, 2) as "€/kg Malto",
-                luppolo_kg as "Kg Luppolo", 
-                ROUND(costo_luppolo_kg::numeric, 2) as "€/kg Luppolo",
-                lievito_kg as "Kg Lievito",
-                ROUND(costo_lievito_kg::numeric, 2) as "€/kg Lievito"
+            SELECT id, data as "Data", tipo as "Tipo Movimento", riferimento as "Riferimento", azienda as "Fornitore / Cotta", 
+                   malto_kg as "Kg Malto/Zucchero", ROUND(costo_malto_kg::numeric, 2) as "€/kg Malto",
+                   luppolo_kg as "Kg Luppolo", ROUND(costo_luppolo_kg::numeric, 2) as "€/kg Luppolo",
+                   lievito_kg as "Kg Lievito", ROUND(costo_lievito_kg::numeric, 2) as "€/kg Lievito"
             FROM materie_prime 
             WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL))
             ORDER BY id DESC;
         """, conn, params=(AZIENDA_ID, AZIENDA_ID))
     st.dataframe(df_mp_mov, use_container_width=True)
 
-    if not df_mp_mov.empty:
-        col_m_del1, col_m_del2 = st.columns([3, 1])
-        with col_m_del1:
-            opzioni_mp_del = [f"ID {r['id']} | {r['Data']} - {r['Tipo Movimento']} - {r['Fornitore / Cotta']} (Malto: {r['Kg Malto/Zucchero']} kg, Luppolo: {r['Kg Luppolo']} kg)" for _, r in df_mp_mov.iterrows()]
-            sel_mp = st.selectbox("Seleziona il movimento materie prime da eliminare:", opzioni_mp_del)
-            id_mp_da_cancellare = int(sel_mp.split("|")[0].replace("ID", "").strip())
-        with col_m_del2:
-            st.write("")
-            st.write("")
-            if st.button("🗑️ Elimina Movimento MP", type="primary"):
-                with get_db_connection() as conn:
-                    with conn.cursor() as c:
-                        c.execute("DELETE FROM materie_prime WHERE id=%s;", (id_mp_da_cancellare,))
-                    conn.commit()
-                st.cache_data.clear()
-                st.success(f"Movimento Materie Prime ID {id_mp_da_cancellare} eliminato!")
-                st.rerun()
-
 # TAB 2: IMBALLAGGI
 with tab2:
     st.subheader("Carico Acquisti Imballaggi")
     with st.form("imb_form"):
         i_data = st.date_input("Data Acquisto").strftime("%Y-%m-%d")
-        i_art = st.selectbox(
-            "Tipo Imballaggio",
-            [
-                "Bottiglie 0.33L vuote",
-                "Bottiglie 0.75L vuote",
-                "Tappi a corona",
-                "Etichette",
-                "Scatole / Cartoni",
-                "Fusti vuoti 20L",
-                "Fusti vuoti 24L",
-                "Fusti vuoti 25L",
-                "Fusti vuoti 30L",
-            ],
-        )
+        i_art = st.selectbox("Tipo Imballaggio", ["Bottiglie 0.33L vuote", "Bottiglie 0.75L vuote", "Tappi a corona", "Etichette", "Scatole / Cartoni", "Fusti vuoti 12L", "Fusti vuoti 20L", "Fusti vuoti 24L", "Fusti vuoti 25L", "Fusti vuoti 30L"])
         i_qta = st.number_input("Quantità Acquistata (pz)", min_value=1, step=100)
-        i_costo = st.number_input(
-            "Costo Unitario Acquisto (€/pz escluso IVA)",
-            min_value=0.001,
-            value=0.25,
-            step=0.01,
-            format="%.3f",
-        )
+        i_costo = st.number_input("Costo Unitario Acquisto (€/pz escluso IVA)", min_value=0.001, value=0.25, step=0.01, format="%.3f")
         i_doc = st.text_input("Rif. Fattura / Fornitore")
         if st.form_submit_button("Carica Imballaggi"):
             with get_db_connection() as conn:
                 with conn.cursor() as c:
-                    c.execute(
-                        """
+                    c.execute("""
                         INSERT INTO imballaggi (azienda_id, tipo_movimento, data, riferimento, articolo, quantita, costo_unitario)
                         VALUES (%s, 'CARICO', %s, %s, %s, %s, %s);
-                        """,
-                        (AZIENDA_ID, i_data, i_doc, i_art, i_qta, i_costo),
-                    )
+                    """, (AZIENDA_ID, i_data, i_doc, i_art, i_qta, i_costo))
                 conn.commit()
             st.cache_data.clear()
             st.success("Imballaggi registrati!")
             st.rerun()
 
-    st.write("---")
-    st.write("#### Giacenza Attuale Imballaggi")
     with get_db_connection() as conn:
-        df_imb = pd.read_sql_query(
-            """
+        df_imb = pd.read_sql_query("""
             SELECT articolo, 
                    SUM(CASE WHEN tipo_movimento='CARICO' THEN quantita ELSE -quantita END) as giacenza_pz,
                    MAX(costo_unitario) as costo_acquisto_unitario_euro,
@@ -744,30 +731,23 @@ with tab2:
             FROM imballaggi 
             WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL))
             GROUP BY articolo;
-            """,
-            conn,
-            params=(AZIENDA_ID, AZIENDA_ID)
-        )
+        """, conn, params=(AZIENDA_ID, AZIENDA_ID))
         st.dataframe(df_imb, use_container_width=True)
 
-# TAB 3: COTTA & SALA COTTURA (CON CONSUMI GAS/ELETTRICITÀ E DATA PREVENTIVA)
+# TAB 3: SALA COTTURA (ALLEGATO I, CONSUMI & DATA PREVENTIVA)
 with tab3:
     st.subheader("⚗️ Sala Cottura: Inserimento Cotta, Allegato I & Consumi Energetici")
-    
     with get_db_connection() as conn:
         df_cotte_all = pd.read_sql_query("SELECT * FROM registro_mosto WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL)) ORDER BY id DESC;", conn, params=(AZIENDA_ID, AZIENDA_ID))
 
     c_m_default, c_l_default, c_y_default = get_cached_ultimi_costi(AZIENDA_ID)
-
     modalita_cotta = st.radio("Azione:", ["➕ Registra Nuova Cotta", "✏️ Modifica Cotta Esistente", "🗑️ Elimina Cotta Errata"], horizontal=True)
 
     if modalita_cotta == "🗑️ Elimina Cotta Errata":
-        st.warning("⚠️ L'eliminazione rimuoverà la cotta selezionata dal registro.")
         if not df_cotte_all.empty:
             scelte_cotte_del = [f"ID {r['id']} | Cotta {r['cotta_num']} - Lotto {r['lotto_sfuso']} ({r['tipo_birra']}) - {r['data']}" for _, r in df_cotte_all.iterrows()]
             sel_del = st.selectbox("Seleziona la cotta da eliminare:", scelte_cotte_del)
             id_del = int(sel_del.split("|")[0].replace("ID", "").strip())
-            
             if st.button("Conferma ed Elimina Cotta Definitivamente", type="primary"):
                 with get_db_connection() as conn:
                     with conn.cursor() as c:
@@ -776,725 +756,525 @@ with tab3:
                 st.cache_data.clear()
                 st.success(f"Cotta ID {id_del} eliminata con successo!")
                 st.rerun()
-        else:
-            st.info("Nessuna cotta presente.")
     else:
-        val_data = datetime.now().date()
-        val_data_prev = datetime.now().date()
-        val_c_num = "C26-01"
-        val_lotto = f"LOTTO-{datetime.now().strftime('%y%m%d')}"
-        val_stile = "Blonde"
-        val_cl_ini = 0.0
-        val_cl_fin = 500.0
-        val_litri = 500.0
-        val_plato = 12.0
-        val_malto = 100.0
-        val_luppolo_kg = 1.00
-        val_lievito_kg = 0.0
-        val_gas = 14.5
-        val_kwh = 45.0
+        val_data, val_data_prev = datetime.now().date(), datetime.now().date()
+        val_c_num, val_lotto, val_stile = "C26-01", f"LOTTO-{datetime.now().strftime('%y%m%d')}", "Blonde"
+        val_cl_ini, val_cl_fin, val_litri, val_plato = 0.0, 500.0, 500.0, 12.0
+        val_malto, val_luppolo_kg, val_lievito_kg, val_gas, val_kwh = 100.0, 1.00, 0.0, 14.5, 45.0
         id_cotta_modifica = None
 
-        if modalita_cotta == "✏️ Modifica Cotta Esistente":
-            if not df_cotte_all.empty:
-                scelte_cotte = [f"ID {r['id']} | Cotta {r['cotta_num']} - Lotto {r['lotto_sfuso']} ({r['tipo_birra']}) - {r['data']}" for _, r in df_cotte_all.iterrows()]
-                selezione_str = st.selectbox("Seleziona la cotta da modificare:", scelte_cotte)
-                id_cotta_modifica = int(selezione_str.split("|")[0].replace("ID", "").strip())
-                r_sel = df_cotte_all[df_cotte_all["id"] == id_cotta_modifica].iloc[0]
-
-                try:
-                    val_data = datetime.strptime(str(r_sel["data"]), "%Y-%m-%d").date()
-                except Exception:
-                    val_data = datetime.now().date()
-                try:
-                    val_data_prev = datetime.strptime(str(r_sel.get("data_preventiva", "")), "%Y-%m-%d").date()
-                except Exception:
-                    val_data_prev = val_data
-
-                val_c_num = str(r_sel["cotta_num"])
-                val_lotto = str(r_sel["lotto_sfuso"])
-                val_stile = str(r_sel["tipo_birra"])
-                val_cl_ini = float(r_sel.get("contalitri_inizio", 0.0) or 0.0)
-                val_cl_fin = float(r_sel.get("contalitri_fine", 0.0) or 0.0)
-                val_litri = float(r_sel["litri_mosto"])
-                val_plato = float(r_sel["grado_plato"])
-                val_malto = float(r_sel.get("malto_usato_kg", 100.0) or 100.0)
-                val_luppolo_kg = float(r_sel.get("luppolo_usato_kg", 1.00) or 1.00)
-                val_lievito_kg = float(r_sel.get("lievito_usato_kg", 0.0) or 0.0)
-                val_gas = float(r_sel.get("consumo_gas_mc", 14.5) or 14.5)
-                val_kwh = float(r_sel.get("consumo_elettrico_kwh", 45.0) or 45.0)
-            else:
-                st.info("Nessuna cotta presente da modificare.")
+        if modalita_cotta == "✏️ Modifica Cotta Esistente" and not df_cotte_all.empty:
+            scelte_cotte = [f"ID {r['id']} | Cotta {r['cotta_num']} - Lotto {r['lotto_sfuso']} ({r['tipo_birra']}) - {r['data']}" for _, r in df_cotte_all.iterrows()]
+            sel_mod = st.selectbox("Seleziona cotta da modificare:", scelte_cotte)
+            id_cotta_modifica = int(sel_mod.split("|")[0].replace("ID", "").strip())
+            r_sel = df_cotte_all[df_cotte_all["id"] == id_cotta_modifica].iloc[0]
+            val_c_num = str(r_sel["cotta_num"])
+            val_lotto = str(r_sel["lotto_sfuso"])
+            val_stile = str(r_sel["tipo_birra"])
+            val_litri = float(r_sel["litri_mosto"])
+            val_plato = float(r_sel["grado_plato"])
+            val_malto = float(r_sel.get("malto_usato_kg", 100.0) or 100.0)
+            val_luppolo_kg = float(r_sel.get("luppolo_usato_kg", 1.00) or 1.00)
+            val_gas = float(r_sel.get("consumo_gas_mc", 14.5) or 14.5)
+            val_kwh = float(r_sel.get("consumo_elettrico_kwh", 45.0) or 45.0)
 
         col_d1, col_d2, col_d3, col_d4 = st.columns(4)
-        with col_d1:
-            data_prev_sel = st.date_input("Data Preventiva Cotta (Dogane)", value=val_data_prev)
-        with col_d2:
-            data_cotta_sel = st.date_input("Data Effettiva Produzione", value=val_data)
-        with col_d3:
-            c_num = st.text_input("N° Cotta", value=val_c_num)
-        with col_d4:
-            lotto_sfuso = st.text_input("Lotto Mosto Sfuso", value=val_lotto)
+        with col_d1: data_prev_sel = st.date_input("Data Preventiva Cotta (Dogane)", value=val_data_prev)
+        with col_d2: data_cotta_sel = st.date_input("Data Effettiva Cotta", value=val_data)
+        with col_d3: c_num = st.text_input("N° Cotta", value=val_c_num)
+        with col_d4: lotto_sfuso = st.text_input("Lotto Mosto Sfuso", value=val_lotto)
 
-        stile = st.text_input("Stile Birra (es. Blonde, Golden Ale, Pilsner, Dubbel, APA)", value=val_stile)
+        stile = st.text_input("Stile Birra", value=val_stile)
 
-        st.write("---")
-        st.markdown("#### 📟 Rilevazione Contalitri Fiscale (Dogane)")
-        col_cl1, col_cl2, col_cl3 = st.columns(3)
-        with col_cl1:
-            cl_inizio = st.number_input("Lettura Iniziale Contalitri", min_value=0.0, step=10.0, value=val_cl_ini)
-        with col_cl2:
-            cl_fine = st.number_input("Lettura Finale Contalitri", min_value=0.0, step=10.0, value=val_cl_fin)
-        with col_cl3:
-            litri_calcolati_cl = max(0.0, cl_fine - cl_inizio)
-            st.metric("Litri Mosto Rilevati da Contalitri", f"{litri_calcolati_cl:.1f} LT")
+        cl1, cl2, cl3 = st.columns(3)
+        with cl1: cl_inizio = st.number_input("Lettura Iniziale Contalitri", min_value=0.0, value=val_cl_ini)
+        with cl2: cl_fine = st.number_input("Lettura Finale Contalitri", min_value=0.0, value=val_cl_fin)
+        with cl3:
+            diff_cl = max(0.0, cl_fine - cl_inizio)
+            st.metric("Volume Contalitri (LT)", f"{diff_cl:.1f} LT")
 
-        litri_mosto_reali = st.number_input("Litri Mosto Reali Trasferiti al Fermentatore", min_value=0.0, step=10.0, value=val_litri if val_litri > 0 else (litri_calcolati_cl if litri_calcolati_cl > 0 else 500.0))
-        plato = st.number_input("Grado Plato Rilevato (°P)", min_value=0.0, step=0.1, value=val_plato)
+        litri_mosto_reali = st.number_input("Litri Mosto Trasferiti in Fermentatore", min_value=0.0, value=val_litri if val_litri > 0 else 500.0)
+        plato = st.number_input("Grado Plato (°P)", min_value=0.0, step=0.1, value=val_plato)
+        accisa_dovuta_calc = ((litri_mosto_reali * plato) / 100.0) * ALIQUOTA_ACCISA_PLATO
 
-        ettogradi_cotta = (litri_mosto_reali * plato) / 100.0
-        accisa_dovuta_calc = ettogradi_cotta * ALIQUOTA_ACCISA_PLATO
-
-        st.write("---")
-        st.markdown("#### ⚡ Consumi Energetici Obbligatori (Allegato I Dogane)")
         ce1, ce2, ce3 = st.columns(3)
-        with ce1:
-            gas_mc = st.number_input("Consumo Gas GPL / Metano (Standard mc)", min_value=0.0, step=0.5, value=val_gas)
-        with ce2:
-            kwh_consumati = st.number_input("Consumo Energia Elettrica (kWh)", min_value=0.0, step=1.0, value=val_kwh)
-        with ce3:
-            st.metric("Accisa Dogane Dovuta Cotta", f"€ {accisa_dovuta_calc:.2f}", help=f"Ettogradi: {ettogradi_cotta:.2f} °E")
+        with ce1: gas_mc = st.number_input("Consumo GPL / Metano (Smc)", min_value=0.0, value=val_gas)
+        with ce2: kwh_consumati = st.number_input("Consumo Elettricità (kWh)", min_value=0.0, value=val_kwh)
+        with ce3: st.metric("Accisa Dovuta Cotta", f"€ {accisa_dovuta_calc:.2f}")
 
-        st.write("---")
-        st.markdown("#### 🌾 Materie Prime Impiegate & Scelta Unità (g / kg)")
         col_m1, col_m2 = st.columns(2)
         with col_m1:
-            m_usato = st.number_input("Kg Malto & Zuccheri Macinati/Usati (kg)", min_value=0.0, step=1.0, value=val_malto)
-            
-            u_lup = st.selectbox("Unità Misura Luppolo:", ["Grammi (g)", "Chilogrammi (kg)"], index=0)
-            if u_lup == "Grammi (g)":
-                val_lup_g = val_luppolo_kg * 1000.0 if val_luppolo_kg > 0 else 1000.0
-                l_input = st.number_input("Quantità Luppolo (Grammi)", min_value=0.0, step=10.0, value=val_lup_g)
-                l_usato = l_input / 1000.0
-            else:
-                l_input = st.number_input("Quantità Luppolo (Kg)", min_value=0.0, step=0.05, value=val_luppolo_kg)
-                l_usato = l_input
-
+            m_usato = st.number_input("Kg Malto Macinato (kg)", min_value=0.0, value=val_malto)
+            l_input_g = st.number_input("Quantità Luppolo (Grammi)", min_value=0.0, value=val_luppolo_kg * 1000.0)
+            l_usato = l_input_g / 1000.0
             sg = 1 + (plato / (258.6 - ((plato / 258.2) * 227.1)))
-            estratto_kg = (litri_mosto_reali * plato * sg) / 100.0 if litri_mosto_reali > 0 else 0
-            resa_perc = (estratto_kg / m_usato * 100.0) if m_usato > 0 else 0.0
-            st.info(f"📊 **Resa di Sala Cottura Calcolata: {resa_perc:.1f}%**")
-
+            resa_perc = ((litri_mosto_reali * plato * sg) / 100.0) / m_usato * 100.0 if m_usato > 0 else 0.0
+            st.info(f"📊 **Resa Sala Cottura:** {resa_perc:.1f}%")
         with col_m2:
-            tipo_lievito = st.radio(
-                "Origine Lievito:",
-                ["Recuperato / Ripitching (NESSUNO scarico magazzino)", "Nuova confezione (SCARICA magazzino)"],
-                index=0 if val_lievito_kg == 0.0 else 1
-            )
-            if "Nuova confezione" in tipo_lievito:
-                u_lievito = st.selectbox("Unità Misura Lievito:", ["Grammi (g)", "Chilogrammi (kg)"], index=0)
-                if u_lievito == "Grammi (g)":
-                    val_y_g = val_lievito_kg * 1000.0 if val_lievito_kg > 0 else 11.5
-                    y_input = st.number_input("Quantità Lievito (Grammi)", min_value=0.0, step=0.5, value=val_y_g)
-                    y_kg = y_input / 1000.0
-                else:
-                    y_input = st.number_input("Quantità Lievito (Kg)", min_value=0.0, step=0.01, value=(val_lievito_kg if val_lievito_kg > 0 else 0.0115))
-                    y_kg = y_input
-                nota_lievito = f"Nuovo ({y_input} {u_lievito})"
-            else:
-                y_kg = 0.0
-                nota_lievito = "Recuperato (Ripitching)"
+            tipo_y = st.radio("Lievito:", ["Recuperato (Ripitching)", "Nuova Confezione"], index=0)
+            y_kg = (st.number_input("Lievito Nuovo (Grammi)", min_value=0.0, value=11.5) / 1000.0) if "Nuova" in tipo_y else 0.0
 
-        st.write("---")
-        st.markdown("#### 💰 Visore Costi Singolo Ingrediente & Calcolo Costo Cotta (da XML)")
-        vc1, vc2, vc3 = st.columns(3)
-        with vc1:
-            costo_malto_eff = st.number_input("Costo Malto/Zucchero (€/kg)", value=c_m_default, step=0.05, format="%.2f")
-            subtot_malto = m_usato * costo_malto_eff
-            st.caption(f"Spesa Malto: € {subtot_malto:.2f}")
-        with vc2:
-            costo_lup_eff = st.number_input("Costo Luppolo (€/kg)", value=c_l_default, step=1.0, format="%.2f")
-            subtot_lup = l_usato * costo_lup_eff
-            st.caption(f"Spesa Luppolo: € {subtot_lup:.2f}")
-        with vc3:
-            costo_liev_eff = st.number_input("Costo Lievito (€/kg)", value=c_y_default, step=5.0, format="%.2f")
-            subtot_liev = y_kg * costo_liev_eff if y_kg > 0 else 0.0
-            st.caption(f"Spesa Lievito: € {subtot_liev:.2f}")
+        subtot_mp = (m_usato * c_m_default) + (l_usato * c_l_default) + (y_kg * c_y_default)
+        costo_lt = (subtot_mp / litri_mosto_reali) if litri_mosto_reali > 0 else 0.0
+        st.success(f"Costo MP Cotta: € {subtot_mp:.2f} | Costo/LT: € {costo_lt:.3f}")
 
-        costo_totale_cotta_calc = subtot_malto + subtot_lup + subtot_liev
-        costo_litro_mosto_calc = (costo_totale_cotta_calc / litri_mosto_reali) if litri_mosto_reali > 0 else 0.0
-
-        st.success(f"💵 **Costo Totale Materie Prime Cotta:** € {costo_totale_cotta_calc:,.2f}  |  🍺 **Costo Materie Prime al Litro:** € {costo_litro_mosto_calc:.3f} / Litro")
-
-        lbl_pulsante = "Aggiorna Dati Cotta Selezionata" if modalita_cotta == "✏️ Modifica Cotta Esistente" else "Salva Cotta in Allegato I & Scarica Magazzino"
-        
-        if st.button(lbl_pulsante, type="primary"):
+        if st.button("Salva Cotta in Allegato I & Scarica Magazzino", type="primary"):
             with get_db_connection() as conn:
                 with conn.cursor() as c:
                     if modalita_cotta == "✏️ Modifica Cotta Esistente" and id_cotta_modifica:
-                        c.execute(
-                            """
+                        c.execute("""
                             UPDATE registro_mosto
-                            SET data=%s, data_preventiva=%s, cotta_num=%s, tipo_birra=%s, litri_mosto=%s, grado_plato=%s, lotto_sfuso=%s, note_lievito=%s,
+                            SET data=%s, data_preventiva=%s, cotta_num=%s, tipo_birra=%s, litri_mosto=%s, grado_plato=%s, lotto_sfuso=%s,
                                 contalitri_inizio=%s, contalitri_fine=%s, malto_usato_kg=%s, luppolo_usato_kg=%s, lievito_usato_kg=%s, resa_perc=%s,
                                 consumo_gas_mc=%s, consumo_elettrico_kwh=%s, accisa_dovuta_euro=%s, costo_totale_cotta=%s, costo_litro_mosto=%s
                             WHERE id=%s;
-                            """,
-                            (data_cotta_sel.strftime("%Y-%m-%d"), data_prev_sel.strftime("%Y-%m-%d"), c_num, stile, litri_mosto_reali, plato, lotto_sfuso, nota_lievito,
-                             cl_inizio, cl_fine, m_usato, l_usato, y_kg, resa_perc, gas_mc, kwh_consumati, accisa_dovuta_calc, costo_totale_cotta_calc, costo_litro_mosto_calc, id_cotta_modifica),
-                        )
-                        st.success(f"Cotta ID {id_cotta_modifica} ({lotto_sfuso}) aggiornata con successo!")
+                        """, (data_cotta_sel.strftime("%Y-%m-%d"), data_prev_sel.strftime("%Y-%m-%d"), c_num, stile, litri_mosto_reali, plato, lotto_sfuso,
+                              cl_inizio, cl_fine, m_usato, l_usato, y_kg, resa_perc, gas_mc, kwh_consumati, accisa_dovuta_calc, subtot_mp, costo_lt, id_cotta_modifica))
                     else:
-                        c.execute(
-                            """
+                        c.execute("""
                             INSERT INTO registro_mosto (azienda_id, data, data_preventiva, cotta_num, tipo_birra, litri_mosto, grado_plato, lotto_sfuso, note_lievito, contalitri_inizio, contalitri_fine, malto_usato_kg, luppolo_usato_kg, lievito_usato_kg, resa_perc, consumo_gas_mc, consumo_elettrico_kwh, accisa_dovuta_euro, costo_totale_cotta, costo_litro_mosto)
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
-                            """,
-                            (AZIENDA_ID, data_cotta_sel.strftime("%Y-%m-%d"), data_prev_sel.strftime("%Y-%m-%d"), c_num, stile, litri_mosto_reali, plato, lotto_sfuso, nota_lievito, cl_inizio, cl_fine, m_usato, l_usato, y_kg, resa_perc, gas_mc, kwh_consumati, accisa_dovuta_calc, costo_totale_cotta_calc, costo_litro_mosto_calc),
-                        )
-                        c.execute(
-                            """
+                        """, (AZIENDA_ID, data_cotta_sel.strftime("%Y-%m-%d"), data_prev_sel.strftime("%Y-%m-%d"), c_num, stile, litri_mosto_reali, plato, lotto_sfuso, tipo_y, cl_inizio, cl_fine, m_usato, l_usato, y_kg, resa_perc, gas_mc, kwh_consumati, accisa_dovuta_calc, subtot_mp, costo_lt))
+                        c.execute("""
                             INSERT INTO materie_prime (azienda_id, tipo, data, riferimento, azienda, malto_kg, luppolo_kg, lievito_kg)
                             VALUES (%s, 'SCARICO', %s, %s, 'COTTA PRODUZIONE', %s, %s, %s);
-                            """,
-                            (AZIENDA_ID, data_cotta_sel.strftime("%Y-%m-%d"), f"Cotta {c_num} - {lotto_sfuso}", m_usato, l_usato, y_kg),
-                        )
-                        st.success(f"Nuova cotta registrata in Allegato I! Accisa: € {accisa_dovuta_calc:.2f}")
+                        """, (AZIENDA_ID, data_cotta_sel.strftime("%Y-%m-%d"), f"Cotta {c_num} - {lotto_sfuso}", m_usato, l_usato, y_kg))
                 conn.commit()
             st.cache_data.clear()
+            st.success("Cotta salvata in Allegato I!")
             st.rerun()
 
     st.write("---")
-    st.markdown("#### Registro Cotte & Consumi Energetici Ufficiale (Allegato I)")
     with get_db_connection() as conn:
-        df_allegato1 = pd.read_sql_query("""
-            SELECT 
-                id, 
-                data_preventiva as "Data Preventiva", 
-                data as "Data Cotta", 
-                cotta_num as "N° Cotta", 
-                tipo_birra as "Stile",
-                litri_mosto as "Litri Mosto", 
-                grado_plato as "°Plato", 
-                accisa_dovuta_euro as "Accisa Dovuta (€)",
-                consumo_gas_mc as "Gas (mc)", 
-                consumo_elettrico_kwh as "Energia (kWh)", 
-                lotto_sfuso as "Lotto Mosto"
-            FROM registro_mosto 
-            WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL))
-            ORDER BY id DESC;
-        """, conn, params=(AZIENDA_ID, AZIENDA_ID))
-        st.dataframe(df_allegato1, use_container_width=True)
+        st.dataframe(pd.read_sql_query("""
+            SELECT id, data_preventiva as "Data Prev.", data as "Data Cotta", cotta_num as "N° Cotta", tipo_birra as "Stile",
+                   litri_mosto as "Litri", grado_plato as "°P", accisa_dovuta_euro as "Accisa (€)",
+                   consumo_gas_mc as "Gas (mc)", consumo_elettrico_kwh as "Energia (kWh)", lotto_sfuso as "Lotto"
+            FROM registro_mosto WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL)) ORDER BY id DESC;
+        """, conn, params=(AZIENDA_ID, AZIENDA_ID)), use_container_width=True)
 
 # TAB 4: CONFEZIONAMENTO MISTO
 with tab4:
-    st.subheader("📦 Confezionamento Misto Cotta (Fusti e Bottiglie Simultanei)")
-    st.write("Puoi confezionare una cotta suddividendola tra più formati (fusti e bottiglie insieme). Inserisci le quantità utilizzate:")
-    
+    st.subheader("📦 Confezionamento Misto Cotta (Fusti e Bottiglie)")
     with get_db_connection() as conn:
         df_mosti = pd.read_sql_query("SELECT id, cotta_num, lotto_sfuso, tipo_birra, litri_mosto, grado_plato, costo_litro_mosto FROM registro_mosto WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL)) ORDER BY id DESC LIMIT 25;", conn, params=(AZIENDA_ID, AZIENDA_ID))
 
     if not df_mosti.empty:
-        opzioni_cotte = [f"ID {r['id']} | Cotta {r['cotta_num']} ({r['tipo_birra']}) - {r['litri_mosto']} LT - °P {r['grado_plato']}" for _, r in df_mosti.iterrows()]
-        cotta_scelta = st.selectbox("Seleziona la Cotta da Confezionare:", opzioni_cotte)
-        id_cotta = int(cotta_scelta.split("|")[0].replace("ID", "").strip())
-        row_sel = df_mosti[df_mosti["id"] == id_cotta].iloc[0]
-        litri_mosto_iniziali = float(row_sel["litri_mosto"])
-        plato_riferimento = float(row_sel["grado_plato"])
-        lotto_predefinito = str(row_sel["lotto_sfuso"])
-        costo_suggerito_lt = float(row_sel.get("costo_litro_mosto", 1.10) or 1.10)
+        opts = [f"ID {r['id']} | Cotta {r['cotta_num']} ({r['tipo_birra']}) - {r['litri_mosto']} LT - °P {r['grado_plato']}" for _, r in df_mosti.iterrows()]
+        sel_c = st.selectbox("Seleziona Cotta:", opts)
+        id_c = int(sel_c.split("|")[0].replace("ID", "").strip())
+        r_sel = df_mosti[df_mosti["id"] == id_c].iloc[0]
+        litri_iniziali = float(r_sel["litri_mosto"])
+        plato_rif = float(r_sel["grado_plato"])
+        lotto_def = str(r_sel["lotto_sfuso"])
+        costo_suggerito_lt = float(r_sel.get("costo_litro_mosto", 1.10) or 1.10)
     else:
-        litri_mosto_iniziali = 500.0
-        plato_riferimento = 12.0
-        lotto_predefinito = "LOTTO-2601"
-        costo_suggerito_lt = 1.10
+        litri_iniziali, plato_rif, lotto_def, costo_suggerito_lt = 500.0, 12.0, "LOTTO-2601", 1.10
 
-    with st.form("conf_form_misto"):
+    with st.form("conf_misto_form"):
         col_gen1, col_gen2, col_gen3 = st.columns(3)
-        with col_gen1:
-            data_imbottigliamento = st.date_input("Data Confezionamento", value=datetime.now())
-        with col_gen2:
-            lotto_c = st.text_input("Lotto Confezionato", value=lotto_predefinito)
-        with col_gen3:
-            costo_prod_lt = st.number_input("Costo Produzione (€/Litro)", min_value=0.01, value=costo_suggerito_lt if costo_suggerito_lt > 0 else 1.10, step=0.05)
+        with col_gen1: data_imb = st.date_input("Data Confezionamento", value=datetime.now())
+        with col_gen2: lotto_c = st.text_input("Lotto Confezionato", value=lotto_def)
+        with col_gen3: costo_p_lt = st.number_input("Costo Produzione (€/LT)", min_value=0.01, value=costo_suggerito_lt, step=0.05)
 
-        st.write("---")
-        st.markdown("#### 🛢️ 1. Quantità Fusti Confezionati")
-        cf1, cf2, cf3, cf4 = st.columns(4)
-        with cf1:
-            q_f20 = st.number_input("N° Fusti 20L", min_value=0, step=1, value=0)
-        with cf2:
-            q_f24 = st.number_input("N° Fusti 24L", min_value=0, step=1, value=0)
-        with cf3:
-            q_f25 = st.number_input("N° Fusti 25L", min_value=0, step=1, value=0)
-        with cf4:
-            q_f30 = st.number_input("N° Fusti 30L", min_value=0, step=1, value=0)
+        st.markdown("#### 🛢️ Fusti")
+        cf1, cf2, cf3, cf4, cf5 = st.columns(5)
+        with cf1: q_f12 = st.number_input("Fusti 12L", min_value=0, value=0)
+        with cf2: q_f20 = st.number_input("Fusti 20L", min_value=0, value=0)
+        with cf3: q_f24 = st.number_input("Fusti 24L", min_value=0, value=0)
+        with cf4: q_f25 = st.number_input("Fusti 25L", min_value=0, value=0)
+        with cf5: q_f30 = st.number_input("Fusti 30L", min_value=0, value=0)
 
-        st.markdown("#### 🍾 2. Quantità Bottiglie Confezionate")
+        st.markdown("#### 🍾 Bottiglie")
         cb1, cb2 = st.columns(2)
-        with cb1:
-            q_b33 = st.number_input("N° Bottiglie 0.33L (pezzi singoli)", min_value=0, step=12, value=0)
-        with cb2:
-            q_b75 = st.number_input("N° Bottiglie 0.75L (pezzi singoli)", min_value=0, step=6, value=0)
+        with cb1: q_b33 = st.number_input("Bottiglie 0.33L", min_value=0, step=12, value=0)
+        with cb2: q_b75 = st.number_input("Bottiglie 0.75L", min_value=0, step=6, value=0)
 
-        litri_fusti = (q_f20 * 20.0) + (q_f24 * 24.0) + (q_f25 * 25.0) + (q_f30 * 30.0)
-        litri_bottiglie = (q_b33 * 0.33) + (q_b75 * 0.75)
-        litri_totali_calcolati = litri_fusti + litri_bottiglie
-        scarto_suggerito = max(0.0, litri_mosto_iniziali - litri_totali_calcolati)
+        lt_teorici = (q_f12 * 12.0) + (q_f20 * 20.0) + (q_f24 * 24.0) + (q_f25 * 25.0) + (q_f30 * 30.0) + (q_b33 * 0.33) + (q_b75 * 0.75)
+        scarto_teorico = max(0.0, litri_iniziali - lt_teorici)
 
-        st.write("---")
-        st.markdown("#### ⚖️ Riepilogo Volumi & Scarto Reale (Modificabili a mano)")
         c_v1, c_v2, c_v3 = st.columns(3)
-        with c_v1:
-            litri_effettivi = st.number_input(
-                "Litri Totali Confezionati (LT)",
-                min_value=0.0,
-                step=1.0,
-                value=float(litri_totali_calcolati),
-                help="Se hai recuperato più o meno birra rispetto alla capienza nominale, correggi qui."
-            )
-        with c_v2:
-            ettogradi_calc = (litri_effettivi * plato_riferimento) / 100.0
-            st.metric("Ettogradi Fiscali Complessivi (°E)", f"{ettogradi_calc:.2f} °E")
-        with c_v3:
-            scarto_reale = st.number_input(
-                "Scarto Finale Reale (Litri Persi)",
-                min_value=0.0,
-                step=0.5,
-                value=float(scarto_suggerito),
-                help="Imposta a 0 se tutto il mosto è stato recuperato senza perdite."
-            )
+        with c_v1: litri_effettivi = st.number_input("Litri Totali Confezionati (LT)", min_value=0.0, value=float(lt_teorici))
+        with c_v2: st.metric("Ettogradi Totali (°E)", f"{(litri_effettivi * plato_rif) / 100.0:.2f} °E")
+        with c_v3: scarto_reale = st.number_input("Scarto Reale (LT)", min_value=0.0, value=float(scarto_teorico))
 
-        btn_confeziona = st.form_submit_button("Carica Tutti i Formati a Magazzino", type="primary")
-
-        if btn_confeziona:
+        if st.form_submit_button("Carica Tutti i Formati a Magazzino", type="primary"):
             if litri_effettivi <= 0:
-                st.error("Inserisci almeno una quantità maggiore di zero per fusti o bottiglie.")
+                st.error("Inserisci almeno un formato confezionato.")
             else:
-                data_imb_str = data_imbottigliamento.strftime("%Y-%m-%d")
-                fattore_correzione = (litri_effettivi / litri_totali_calcolati) if litri_totali_calcolati > 0 else 1.0
-
-                movimenti_da_creare = []
-                if q_f20 > 0: movimenti_da_creare.append(("Fusto 20L", q_f20, (q_f20 * 20.0) * fattore_correzione, "Fusti vuoti 20L"))
-                if q_f24 > 0: movimenti_da_creare.append(("Fusto 24L", q_f24, (q_f24 * 24.0) * fattore_correzione, "Fusti vuoti 24L"))
-                if q_f25 > 0: movimenti_da_creare.append(("Fusto 25L", q_f25, (q_f25 * 25.0) * fattore_correzione, "Fusti vuoti 25L"))
-                if q_f30 > 0: movimenti_da_creare.append(("Fusto 30L", q_f30, (q_f30 * 30.0) * fattore_correzione, "Fusti vuoti 30L"))
-                if q_b33 > 0: movimenti_da_creare.append(("Bottiglia 0.33L", q_b33, (q_b33 * 0.33) * fattore_correzione, "Bottiglie 0.33L vuote"))
-                if q_b75 > 0: movimenti_da_creare.append(("Bottiglia 0.75L", q_b75, (q_b75 * 0.75) * fattore_correzione, "Bottiglie 0.75L vuote"))
+                d_str = data_imb.strftime("%Y-%m-%d")
+                fattore = (litri_effettivi / lt_teorici) if lt_teorici > 0 else 1.0
+                movs = []
+                if q_f12 > 0: movs.append(("Fusto 12L", q_f12, (q_f12 * 12.0) * fattore, "Fusti vuoti 12L"))
+                if q_f20 > 0: movs.append(("Fusto 20L", q_f20, (q_f20 * 20.0) * fattore, "Fusti vuoti 20L"))
+                if q_f24 > 0: movs.append(("Fusto 24L", q_f24, (q_f24 * 24.0) * fattore, "Fusti vuoti 24L"))
+                if q_f25 > 0: movs.append(("Fusto 25L", q_f25, (q_f25 * 25.0) * fattore, "Fusti vuoti 25L"))
+                if q_f30 > 0: movs.append(("Fusto 30L", q_f30, (q_f30 * 30.0) * fattore, "Fusti vuoti 30L"))
+                if q_b33 > 0: movs.append(("Bottiglia 0.33L", q_b33, (q_b33 * 0.33) * fattore, "Bottiglie 0.33L vuote"))
+                if q_b75 > 0: movs.append(("Bottiglia 0.75L", q_b75, (q_b75 * 0.75) * fattore, "Bottiglie 0.75L vuote"))
 
                 with get_db_connection() as conn:
                     with conn.cursor() as c:
-                        for i, (fmt, qta, lt_riga, art_imb) in enumerate(movimenti_da_creare):
-                            scarto_riga = scarto_reale if i == 0 else 0.0
-                            etto_riga = (lt_riga * plato_riferimento) / 100.0
-
-                            c.execute(
-                                """
+                        for idx, (fmt, qta, lt_r, art_imb) in enumerate(movs):
+                            sc = scarto_reale if idx == 0 else 0.0
+                            c.execute("""
                                 INSERT INTO birra_condizionata (azienda_id, tipo, data, lotto, formato, quantita, litri_totali, grado_plato, ettogradi, scarto_litri, costo_produzione_litro, documento_rif)
                                 VALUES (%s, 'CARICO', %s, %s, %s, %s, %s, %s, %s, %s, %s, 'CONFEZIONAMENTO');
-                                """,
-                                (AZIENDA_ID, data_imb_str, lotto_c, fmt, qta, lt_riga, plato_riferimento, etto_riga, scarto_riga, costo_prod_lt),
-                            )
-
-                            c.execute("INSERT INTO imballaggi (azienda_id, tipo_movimento, data, riferimento, articolo, quantita) VALUES (%s, 'SCARICO', %s, %s, %s, %s);", (AZIENDA_ID, data_imb_str, f"Lotto {lotto_c}", art_imb, qta))
+                            """, (AZIENDA_ID, d_str, lotto_c, fmt, qta, lt_r, plato_rif, (lt_r * plato_rif) / 100.0, sc, costo_p_lt))
+                            c.execute("INSERT INTO imballaggi (azienda_id, tipo_movimento, data, riferimento, articolo, quantita) VALUES (%s, 'SCARICO', %s, %s, %s, %s);", (AZIENDA_ID, d_str, f"Lotto {lotto_c}", art_imb, qta))
                             if "Bottiglia" in fmt:
-                                c.execute("INSERT INTO imballaggi (azienda_id, tipo_movimento, data, riferimento, articolo, quantita) VALUES (%s, 'SCARICO', %s, %s, 'Tappi a corona', %s);", (AZIENDA_ID, data_imb_str, f"Lotto {lotto_c}", qta))
-                                c.execute("INSERT INTO imballaggi (azienda_id, tipo_movimento, data, riferimento, articolo, quantita) VALUES (%s, 'SCARICO', %s, %s, 'Etichette', %s);", (AZIENDA_ID, data_imb_str, f"Lotto {lotto_c}", qta))
-
+                                c.execute("INSERT INTO imballaggi (azienda_id, tipo_movimento, data, riferimento, articolo, quantita) VALUES (%s, 'SCARICO', %s, %s, 'Tappi a corona', %s);", (AZIENDA_ID, d_str, f"Lotto {lotto_c}", qta))
+                                c.execute("INSERT INTO imballaggi (azienda_id, tipo_movimento, data, riferimento, articolo, quantita) VALUES (%s, 'SCARICO', %s, %s, 'Etichette', %s);", (AZIENDA_ID, d_str, f"Lotto {lotto_c}", qta))
                     conn.commit()
                 st.cache_data.clear()
-                st.success(f"Confezionamento misto registrato! Caricati {litri_effettivi:.1f} LT complessivi.")
+                st.success(f"Confezionamento registrato! Caricati {litri_effettivi:.1f} LT a magazzino.")
                 st.rerun()
 
-# TAB 5: VENDITE (CARICAMENTO E SCARICO FATTURE ELETTTRONICHE XML)
+# TAB 5: VENDITE XML E MANUALI
 with tab5:
-    st.subheader("🚚 Scarico Vendite Birra (Tutte le Fatture Elettroniche XML)")
-
-    st.markdown("### 📥 1. Carica Fatture di Vendita Elettroniche (XML)")
-    st.write("Trascina qui le fatture XML emesse verso clienti, pub o distributori per scaricare in automatico fusti e bottiglie.")
-
-    up_vendite_xml = st.file_uploader(
-        "Trascina qui uno o più XML delle fatture emesse",
-        type=["xml"],
-        accept_multiple_files=True,
-        key="xml_vendite",
-    )
+    st.subheader("🚚 Scarico Vendite Birra (Fatture XML)")
+    up_vendite_xml = st.file_uploader("Trascina qui le fatture XML emesse", type=["xml"], accept_multiple_files=True, key="xml_vendite")
 
     if up_vendite_xml and st.button("Elabora e Scarica Fatture Emesse"):
-        tot_scarichi = 0
-        tot_litri = 0.0
-        righe_elaborate = []
-
+        tot_scarichi, tot_litri = 0, 0.0
         with get_db_connection() as conn:
             with conn.cursor() as c:
                 for up_xml in up_vendite_xml:
                     try:
                         content = up_xml.read()
                         root = ET.fromstring(content)
-
-                        cessionario_node = None
-                        for el in root.iter():
-                            tag_p = el.tag.split("}")[-1] if "}" in el.tag else el.tag
-                            if tag_p == "DatiAnagraficiCessionario":
-                                cessionario_node = el
-                                break
-
-                        cliente = ""
-                        if cessionario_node is not None:
-                            den_c = trova_testo_nodo(cessionario_node, ["Denominazione"])
-                            cog_c = trova_testo_nodo(cessionario_node, ["Cognome"])
-                            nom_c = trova_testo_nodo(cessionario_node, ["Nome"])
-                            cliente = den_c if den_c else f"{cog_c} {nom_c}".strip()
-                        if not cliente:
-                            cliente = "Cliente"
-
+                        cess = root.find(".//DatiAnagraficiCessionario")
+                        cliente = trova_testo_nodo(cess, ["Denominazione", "Cognome"]) if cess is not None else "Cliente"
                         num_doc = trova_testo_nodo(root, ["Numero"]) or "N.D."
                         data_doc = trova_testo_nodo(root, ["Data"]) or pd.Timestamp.now().strftime("%Y-%m-%d")
                         rif_vendita = f"Fatt. {num_doc} - {cliente}"
 
                         c.execute("SELECT id FROM birra_condizionata WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL)) AND documento_rif=%s LIMIT 1;", (AZIENDA_ID, AZIENDA_ID, rif_vendita))
                         if c.fetchone():
-                            st.warning(f"⚠️ Fattura di Vendita XML N. {num_doc} ({cliente}) già caricata! File ignorato.")
+                            st.warning(f"⚠️ Fattura {num_doc} già elaborata! Saltata.")
                             continue
 
                         for el in root.iter():
-                            tag_linea = el.tag.split("}")[-1] if "}" in el.tag else el.tag
-                            if tag_linea == "DettaglioLinee":
+                            if el.tag.split("}")[-1] == "DettaglioLinee":
                                 desc = trova_testo_nodo(el, ["Descrizione"])
-                                qta_str = trova_testo_nodo(el, ["Quantita"])
-                                qta = int(float(qta_str.replace(",", "."))) if qta_str else 1
-                                prezzo_str = trova_testo_nodo(el, ["PrezzoUnitario"])
-                                prezzo_un = float(prezzo_str.replace(",", ".")) if prezzo_str else 0.0
-
-                                info_birra = estrai_birra_da_vendita(desc)
-                                if info_birra:
-                                    formato_v, litri_un = info_birra
-                                    litri_riga = qta * litri_un
-
-                                    c.execute(
-                                        """
+                                qta = int(float(trova_testo_nodo(el, ["Quantita"]).replace(",", ".") or 1))
+                                p_un = float(trova_testo_nodo(el, ["PrezzoUnitario"]).replace(",", ".") or 0.0)
+                                b_info = estrai_birra_da_vendita(desc)
+                                if b_info:
+                                    fmt_v, lt_un = b_info
+                                    litri_r = qta * lt_un
+                                    c.execute("""
                                         INSERT INTO birra_condizionata (azienda_id, tipo, data, lotto, formato, quantita, litri_totali, costo_produzione_litro, documento_rif)
                                         VALUES (%s, 'SCARICO', %s, '-', %s, %s, %s, %s, %s);
-                                        """,
-                                        (AZIENDA_ID, data_doc, formato_v, qta, litri_riga, prezzo_un, rif_vendita),
-                                    )
+                                    """, (AZIENDA_ID, data_doc, fmt_v, qta, litri_r, p_un, rif_vendita))
                                     tot_scarichi += 1
-                                    tot_litri += litri_riga
-                                    righe_elaborate.append({
-                                        "Data": data_doc,
-                                        "Riferimento": rif_vendita,
-                                        "Articolo": desc,
-                                        "Formato Riconosciuto": formato_v,
-                                        "Quantità (pz)": qta,
-                                        "Litri Scaricati": litri_riga,
-                                    })
+                                    tot_litri += litri_r
                     except Exception as e:
                         st.error(f"Errore su {up_xml.name}: {e}")
                 conn.commit()
-
-        if righe_elaborate:
+        if tot_scarichi > 0:
             st.cache_data.clear()
-            st.success(f"Registrati con successo {tot_scarichi} scarichi per complessivi {tot_litri:.1f} Litri venduti!")
-            st.dataframe(pd.DataFrame(righe_elaborate), use_container_width=True)
+            st.success(f"Registrati {tot_scarichi} scarichi per {tot_litri:.1f} Litri!")
             st.rerun()
 
     st.write("---")
-    st.markdown("### ✍️ 2. Scarico Vendita Manuale")
+    st.markdown("### ✍️ Scarico Manuale")
     with st.form("vendita_manuale_form"):
-        doc_v = st.text_input("Rif. Fattura / DDT / Cliente")
-        fmt_v = st.selectbox(
-            "Formato Venduto",
-            ["Fusto 20L", "Fusto 24L", "Fusto 25L", "Fusto 30L", "Bottiglia 0.33L", "Bottiglia 0.75L"],
-        )
+        doc_v = st.text_input("Riferimento DDT / Cliente")
+        fmt_v = st.selectbox("Formato Venduto", ["Fusto 12L", "Fusto 20L", "Fusto 24L", "Fusto 25L", "Fusto 30L", "Bottiglia 0.33L", "Bottiglia 0.75L"])
         qta_v = st.number_input("Quantità Venduta", min_value=1, step=1)
         if st.form_submit_button("Registra Scarico Manuale"):
             oggi = pd.Timestamp.now().strftime("%Y-%m-%d")
-            l_dict = {"Fusto 20L": 20.0, "Fusto 24L": 24.0, "Fusto 25L": 25.0, "Fusto 30L": 30.0, "Bottiglia 0.33L": 0.33, "Bottiglia 0.75L": 0.75}
-            l_un = l_dict[fmt_v]
+            l_map = {"Fusto 12L": 12.0, "Fusto 20L": 20.0, "Fusto 24L": 24.0, "Fusto 25L": 25.0, "Fusto 30L": 30.0, "Bottiglia 0.33L": 0.33, "Bottiglia 0.75L": 0.75}
             with get_db_connection() as conn:
                 with conn.cursor() as c:
-                    c.execute(
-                        """
+                    c.execute("""
                         INSERT INTO birra_condizionata (azienda_id, tipo, data, lotto, formato, quantita, litri_totali, documento_rif)
                         VALUES (%s, 'SCARICO', %s, '-', %s, %s, %s, %s);
-                        """,
-                        (AZIENDA_ID, oggi, fmt_v, qta_v, qta_v * l_un, doc_v),
-                    )
+                    """, (AZIENDA_ID, oggi, fmt_v, qta_v, qta_v * l_map[fmt_v], doc_v))
                 conn.commit()
             st.cache_data.clear()
-            st.success("Scarico vendita registrato!")
+            st.success("Scarico registrato!")
             st.rerun()
 
-# TAB 6: GIACENZE MAGAZZINO (TUTTE LE RIGHE COMPLETE)
+# TAB 6: GIACENZE MAGAZZINO & METRICHE TRASPARENTI CONTEGGI
 with tab6:
-    st.subheader("🏛️ Giacenze Magazzino Birra Pronta & Prodotti Finiti")
-    st.write("Consistenze aggiornate in tempo reale da cotte, confezionamenti e tutti gli scarichi XML.")
+    st.subheader("🏛️ Giacenze Magazzino Prodotti Finiti")
+
+    # Contatori trasparenti per ogni archivio
+    with get_db_connection() as conn:
+        with conn.cursor() as c:
+            c.execute("SELECT COUNT(*) FROM birra_condizionata WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL));", (AZIENDA_ID, AZIENDA_ID))
+            cnt_birra = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM materie_prime WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL));", (AZIENDA_ID, AZIENDA_ID))
+            cnt_mp = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM imballaggi WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL));", (AZIENDA_ID, AZIENDA_ID))
+            cnt_imb = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM registro_mosto WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL));", (AZIENDA_ID, AZIENDA_ID))
+            cnt_mosto = c.fetchone()[0]
+
+    tot_movimenti_generali = cnt_birra + cnt_mp + cnt_imb + cnt_mosto
+
+    with st.expander("📊 Riepilogo Integrità Database e Conteggio Record", expanded=True):
+        mc1, mc2, mc3, mc4, mc5 = st.columns(5)
+        mc1.metric("Movimenti Birra Condizionata", f"{cnt_birra:,} righe")
+        mc2.metric("Movimenti Materie Prime", f"{cnt_mp:,} righe")
+        mc3.metric("Movimenti Imballaggi", f"{cnt_imb:,} righe")
+        mc4.metric("Registro Cotte Allegato I", f"{cnt_mosto:,} cotte")
+        mc5.metric("TOTALE MOVIMENTI DATABASE", f"{tot_movimenti_generali:,} record")
 
     with get_db_connection() as conn:
-        df_pf = pd.read_sql_query(
-            """
-            SELECT 
-                formato as "Formato Contenitore", 
-                COALESCE(SUM(CASE WHEN tipo='CARICO' THEN quantita ELSE -quantita END), 0) as "Giacenza (Pezzi)",
-                ROUND(COALESCE(SUM(CASE WHEN tipo='CARICO' THEN litri_totali ELSE -litri_totali END), 0)::numeric, 1) as "Giacenza (Litri)",
-                ROUND(AVG(grado_plato)::numeric, 1) as "Grado Plato Medio (°P)"
+        df_pf = pd.read_sql_query("""
+            SELECT formato as "Formato Contenitore", 
+                   COALESCE(SUM(CASE WHEN tipo='CARICO' THEN quantita ELSE -quantita END), 0) as "Giacenza (Pezzi)",
+                   ROUND(COALESCE(SUM(CASE WHEN tipo='CARICO' THEN litri_totali ELSE -litri_totali END), 0)::numeric, 1) as "Giacenza (Litri)",
+                   ROUND(AVG(grado_plato)::numeric, 1) as "Grado Plato Medio (°P)"
             FROM birra_condizionata 
             WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL))
-            GROUP BY formato
-            ORDER BY formato;
-            """,
-            conn,
-            params=(AZIENDA_ID, AZIENDA_ID)
-        )
+            GROUP BY formato ORDER BY formato;
+        """, conn, params=(AZIENDA_ID, AZIENDA_ID))
         st.dataframe(df_pf, use_container_width=True)
 
-        st.write("---")
-        st.markdown("#### 🔍 Dettaglio Completo Movimentazioni e Fatture (Tutti i Record)")
-        df_dettaglio_lotti = pd.read_sql_query(
-            """
-            SELECT 
-                id, 
-                data as "Data", 
-                tipo as "Movimento", 
-                lotto as "Lotto", 
-                formato as "Formato", 
-                quantita as "Pz", 
-                litri_totali as "Litri", 
-                ettogradi as "°Ettogradi", 
-                scarto_litri as "Scarto (LT)", 
-                documento_rif as "Riferimento"
+        st.markdown(f"#### 🔍 Dettaglio Movimentazioni Birra Condizionata ({cnt_birra:,} Righe)")
+        df_det = pd.read_sql_query("""
+            SELECT id, data as "Data", tipo as "Movimento", lotto as "Lotto", formato as "Formato", 
+                   quantita as "Pz", litri_totali as "Litri", ettogradi as "°Ettogradi", scarto_litri as "Scarto (LT)", documento_rif as "Riferimento"
             FROM birra_condizionata 
             WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL))
             ORDER BY id DESC;
-            """,
-            conn,
-            params=(AZIENDA_ID, AZIENDA_ID)
-        )
-        st.dataframe(df_dettaglio_lotti, use_container_width=True)
+        """, conn, params=(AZIENDA_ID, AZIENDA_ID))
+        st.dataframe(df_det, use_container_width=True)
 
-        st.markdown("#### 🗑️ Elimina Movimento Errato (Correzione Magazzino)")
-        if not df_dettaglio_lotti.empty:
-            col_del1, col_del2 = st.columns([3, 1])
-            with col_del1:
-                opzioni_mov_del = [
-                    f"ID {r['id']} | {r['Data']} - {r['Movimento']} {r['Pz']} pz ({r['Formato']} - {r['Litri']} LT) - Rif: {r['Riferimento']}"
-                    for _, r in df_dettaglio_lotti.iterrows()
-                ]
-                sel_mov = st.selectbox("Seleziona il movimento errato da eliminare:", opzioni_mov_del)
-                id_mov_da_cancellare = int(sel_mov.split("|")[0].replace("ID", "").strip())
-            with col_del2:
+        if not df_det.empty:
+            col_d1, col_d2 = st.columns([3, 1])
+            with col_d1:
+                opts_del = [f"ID {r['id']} | {r['Data']} - {r['Movimento']} {r['Pz']} pz ({r['Formato']} - {r['Litri']} LT) - Rif: {r['Riferimento']}" for _, r in df_det.iterrows()]
+                sel_m_del = st.selectbox("Seleziona movimento errato da eliminare:", opts_del)
+                id_m_del = int(sel_m_del.split("|")[0].replace("ID", "").strip())
+            with col_d2:
                 st.write("")
                 st.write("")
                 if st.button("🗑️ Elimina Movimento", type="primary"):
                     with conn.cursor() as c:
-                        c.execute("DELETE FROM birra_condizionata WHERE id=%s;", (id_mov_da_cancellare,))
+                        c.execute("DELETE FROM birra_condizionata WHERE id=%s;", (id_m_del,))
                     conn.commit()
                     st.cache_data.clear()
-                    st.success(f"Movimento ID {id_mov_da_cancellare} rimosso! Magazzino ricalcolato.")
+                    st.success("Movimento eliminato!")
                     st.rerun()
-        else:
-            st.info("Nessun movimento presente in archivio.")
 
-        st.write("---")
-        st.write("#### Registro Cotte & Contalitri (Allegato I)")
-        st.dataframe(pd.read_sql_query("SELECT id, data_preventiva, data, cotta_num, tipo_birra, contalitri_inizio, contalitri_fine, litri_mosto, grado_plato, malto_usato_kg, resa_perc, consumo_gas_mc, consumo_elettrico_kwh, accisa_dovuta_euro, costo_litro_mosto, lotto_sfuso, note_lievito FROM registro_mosto WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL)) ORDER BY id DESC;", conn, params=(AZIENDA_ID, AZIENDA_ID)), use_container_width=True)
-
-# TAB 7: SCADENZE ACCISE CON CONTROLLO DI SICUREZZA ANTI-CRASH
+# TAB 7: SCADENZE DOGANE (SICURE E PROTETTE DA CRASH)
 with tab7:
-    st.subheader("⏰ Gestione Scadenze Doganali: Tributo 2803 e 2813")
-    st.write("Registra o cancella le scadenze tributi doganali con codice 2803 (Accisa mensile) o 2813 (Diritto annuale licenza).")
-
+    st.subheader("⏰ Scadenze Doganali: Tributo 2803 e 2813")
     col_acc1, col_acc2 = st.columns(2)
     with col_acc1:
         with st.form("form_accisa"):
-            codice_trib_scelto = st.selectbox(
-                "Codice Tributo F24:",
-                [
-                    "2803 - Accisa sulla Birra (Pagamento mensile)",
-                    "2813 - Diritto di Licenza Annuale (Fabbricazione/Deposito)"
-                ]
-            )
+            codice_trib_scelto = st.selectbox("Codice Tributo F24:", ["2803 - Accisa Birra (Mensile entro il 16)", "2813 - Diritto Licenza Annuale"])
             mese_rif = st.selectbox("Mese di Riferimento", ["Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno", "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"])
             anno_rif = st.number_input("Anno", min_value=2024, max_value=2030, value=datetime.now().year)
-            
-            if "2813" in codice_trib_scelto:
-                default_data = datetime(anno_rif, 12, 16)
-            else:
-                default_data = datetime(anno_rif, datetime.now().month, 16)
-
-            data_scad = st.date_input("Data Scadenza Pagamento F24", value=default_data)
-            importo_acc = st.number_input("Importo Dovuto F24 (€)", min_value=0.0, step=25.0, value=250.0 if "2803" in codice_trib_scelto else 68.0)
-            note_acc = st.text_input("Note Aggiuntive", value="Versamento F24 Accise")
-
-            if st.form_submit_button("Salva Scadenza Tributo"):
-                codice_pulito = "2803" if "2803" in codice_trib_scelto else "2813"
+            d_default = datetime(anno_rif, 12, 16) if "2813" in codice_trib_scelto else datetime(anno_rif, datetime.now().month, 16)
+            data_scad = st.date_input("Data Scadenza F24", value=d_default)
+            importo_acc = st.number_input("Importo Dovuto (€)", min_value=0.0, step=25.0, value=250.0 if "2803" in codice_trib_scelto else 68.0)
+            note_acc = st.text_input("Note", value="Versamento F24 Dogane")
+            if st.form_submit_button("Salva Scadenza"):
+                cod_p = "2803" if "2803" in codice_trib_scelto else "2813"
                 with get_db_connection() as conn:
                     with conn.cursor() as c:
-                        c.execute(
-                            """
+                        c.execute("""
                             INSERT INTO scadenze_accise (azienda_id, periodo_riferimento, data_scadenza, codice_tributo, importo_dovuto, note)
                             VALUES (%s, %s, %s, %s, %s, %s);
-                            """,
-                            (AZIENDA_ID, f"{mese_rif} {anno_rif}", data_scad.strftime("%Y-%m-%d"), codice_pulito, importo_acc, note_acc),
-                        )
+                        """, (AZIENDA_ID, f"{mese_rif} {anno_rif}", data_scad.strftime("%Y-%m-%d"), cod_p, importo_acc, note_acc))
                     conn.commit()
                 st.cache_data.clear()
-                st.success(f"Scadenza Tributo {codice_pulito} salvata!")
+                st.success("Scadenza registrata!")
                 st.rerun()
 
     with col_acc2:
-        st.markdown("#### 📅 Scadenze Dogane Registrate & Promemoria")
+        st.markdown("#### 📅 Scadenze Dogane Registrate")
         with get_db_connection() as conn:
-            df_accise = pd.read_sql_query("SELECT id, periodo_riferimento, data_scadenza, COALESCE(codice_tributo, '2803') as codice_tributo, importo_dovuto, stato, note FROM scadenze_accise WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL)) ORDER BY data_scadenza ASC;", conn, params=(AZIENDA_ID, AZIENDA_ID))
-        
-        if not df_accise.empty:
-            for idx, r in df_accise.iterrows():
-                scad_date = pd.to_datetime(r["data_scadenza"]).date()
-                giorni_rimasti = (scad_date - datetime.now().date()).days
-                cod_trib = r["codice_tributo"]
-                desc_trib = "Accisa Birra (2803)" if cod_trib == "2803" else "Diritto Licenza Annuale (2813)"
-                
-                with st.expander(f"📌 Tributo {cod_trib} ({desc_trib}) - {scad_date.strftime('%d/%m/%Y')} - € {r['importo_dovuto']:.2f}"):
-                    if 0 <= giorni_rimasti <= 3:
-                        st.error(f"⚠️ SCADENZA IMMINENTE: Mancano solo {giorni_rimasti} giorni!")
-                        st.markdown("""
-                            <audio autoplay>
-                                <source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" type="audio/mpeg">
-                            </audio>
-                        """, unsafe_allow_html=True)
-                    elif giorni_rimasti < 0:
-                        st.warning(f"Scaduta da {abs(giorni_rimasti)} giorni.")
-                    else:
-                        st.info(f"Mancano {giorni_rimasti} giorni al versamento.")
+            df_acc = pd.read_sql_query("SELECT id, periodo_riferimento, data_scadenza, codice_tributo, importo_dovuto FROM scadenze_accise WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL)) ORDER BY data_scadenza ASC;", conn, params=(AZIENDA_ID, AZIENDA_ID))
+        if not df_acc.empty:
+            for _, r in df_acc.iterrows():
+                dt_sc = pd.to_datetime(r["data_scadenza"]).date()
+                diff_gg = (dt_sc - datetime.now().date()).days
+                with st.expander(f"📌 Tributo {r['codice_tributo']} - {dt_sc.strftime('%d/%m/%Y')} (€ {r['importo_dovuto']:.2f})"):
+                    st.write(f"Mancano {diff_gg} giorni al versamento.")
+                    titolo_g = urllib.parse.quote(f"F24 Trib. {r['codice_tributo']} BrewDesk - € {r['importo_dovuto']:.2f}")
+                    gcal_url = f"https://calendar.google.com/calendar/render?action=TEMPLATE&text={titolo_g}&dates={dt_sc.strftime('%Y%m%d')}/{dt_sc.strftime('%Y%m%d')}"
+                    st.link_button("🌐 Sincronizza su Google Calendar", gcal_url)
 
-                    titolo_g = urllib.parse.quote(f"F24 Tributo {cod_trib} BrewDesk - € {r['importo_dovuto']:.2f}")
-                    desc_g = urllib.parse.quote(f"Versamento F24 Codice Tributo {cod_trib} ({desc_trib}): € {r['importo_dovuto']:.2f}. Note: {r['note']}")
-                    gcal_url = f"https://calendar.google.com/calendar/render?action=TEMPLATE&text={titolo_g}&dates={scad_date.strftime('%Y%m%d')}/{scad_date.strftime('%Y%m%d')}"
-                    
-                    st.link_button(f"🌐 Sincronizza Tributo {cod_trib} su Google Calendar", gcal_url)
-
-                    ics_bytes = genera_file_ics(
-                        f"F24 Tributo {cod_trib} BrewDesk - € {r['importo_dovuto']:.2f}",
-                        f"Versamento F24 Dogane Tributo {cod_trib} ({desc_trib}): € {r['importo_dovuto']:.2f}. {r['note']}",
-                        scad_date,
-                    )
-                    st.download_button(
-                        label=f"🍏 Scarica Tributo {cod_trib} per iPhone (iOS)",
-                        data=ics_bytes,
-                        file_name=f"F24_Tributo_{cod_trib}_{r['periodo_riferimento'].replace(' ', '_')}.ics",
-                        mime="text/calendar",
-                        key=f"ics_{r['id']}",
-                    )
-            
             st.write("---")
-            st.markdown("#### 🗑️️ Cancella Scadenza Errata")
-            opzioni_del_scad = [
-                f"ID {r['id']} | Trib. {r['codice_tributo']} - {r['periodo_riferimento']} ({r['data_scadenza']}) - € {r['importo_dovuto']:.2f}"
-                for _, r in df_accise.iterrows()
-            ]
-            if opzioni_del_scad:
-                scad_sel_del = st.selectbox("Seleziona la scadenza da cancellare:", opzioni_del_scad)
+            opts_del = [f"ID {r['id']} | Trib. {r['codice_tributo']} - {r['periodo_riferimento']} (€ {r['importo_dovuto']:.2f})" for _, r in df_acc.iterrows()]
+            if opts_del:
+                sel_s_del = st.selectbox("Seleziona scadenza da cancellare:", opts_del)
                 if st.button("🗑️ Elimina Scadenza Selezionata", type="primary"):
-                    id_scad_da_eliminare = int(scad_sel_del.split("|")[0].replace("ID", "").strip())
+                    id_scad_da_eliminare = int(sel_s_del.split("|")[0].replace("ID", "").strip())
                     with get_db_connection() as conn:
                         with conn.cursor() as c:
                             c.execute("DELETE FROM scadenze_accise WHERE id=%s;", (id_scad_da_eliminare,))
                         conn.commit()
                     st.cache_data.clear()
-                    st.success(f"Scadenza ID {id_scad_da_eliminare} eliminata definitivamente!")
+                    st.success("Scadenza eliminata!")
                     st.rerun()
-        else:
-            st.write("Nessuna scadenza tributi attualmente inserita.")
 
-# TAB 8: REPORT 31/12 COMMERCIALISTA
+# TAB 8: REPORT 31/12 & BILANCIO DOGANE (ENTRO 31 GENNAIO)
 with tab8:
-    st.subheader("📑 Riepilogo al 31 Dicembre per Commercialista e Bilancio")
+    st.subheader("📑 Report di Chiusura Esercizio: Bilancio Dogane & Commercialista")
+    anno_bilancio = st.selectbox("Seleziona Anno Fiscale di Chiusura:", [2026, 2025, 2024], index=0)
 
-    costo_kg_m = 1.35
-    costo_kg_l = 28.00
-    costo_kg_y = 65.00
+    # Estrazione Dati Bilancio Finanziario Dogane
+    with get_db_connection() as conn:
+        df_cotte_anno = pd.read_sql_query("""
+            SELECT COUNT(id) as num_cotte, 
+                   COALESCE(SUM(litri_mosto), 0) as tot_litri,
+                   COALESCE(SUM(consumo_gas_mc), 0) as tot_gas,
+                   COALESCE(SUM(consumo_elettrico_kwh), 0) as tot_kwh,
+                   COALESCE(SUM(malto_usato_kg), 0) as malto_usato,
+                   COALESCE(SUM(luppolo_usato_kg), 0) as luppolo_usato,
+                   COALESCE(SUM(lievito_usato_kg), 0) as lievito_usato,
+                   COALESCE(AVG(NULLIF(resa_perc, 0)), 0) as resa_media
+            FROM registro_mosto
+            WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL)) AND data LIKE %s;
+        """, conn, params=(AZIENDA_ID, AZIENDA_ID, f"{anno_bilancio}%"))
 
+        df_mp_acq = pd.read_sql_query("""
+            SELECT COALESCE(SUM(malto_kg), 0) as malto_acq,
+                   COALESCE(SUM(luppolo_kg), 0) as luppolo_acq,
+                   COALESCE(SUM(lievito_kg), 0) as lievito_acq
+            FROM materie_prime
+            WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL)) AND tipo='CARICO' AND data LIKE %s;
+        """, conn, params=(AZIENDA_ID, AZIENDA_ID, f"{anno_bilancio}%"))
+
+        df_conf_anno = pd.read_sql_query("""
+            SELECT formato, COALESCE(SUM(quantita), 0) as pz_confezionati
+            FROM birra_condizionata
+            WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL)) AND tipo='CARICO' AND data LIKE %s
+            GROUP BY formato;
+        """, conn, params=(AZIENDA_ID, AZIENDA_ID, f"{anno_bilancio}%"))
+
+    conf_map = {r["formato"]: int(r["pz_confezionati"]) for _, r in df_conf_anno.iterrows()}
+    n_b33 = conf_map.get("Bottiglia 0.33L", 0)
+    n_b75 = conf_map.get("Bottiglia 0.75L", 0)
+    n_f12 = conf_map.get("Fusto 12L", 0)
+    n_f20 = conf_map.get("Fusto 20L", 0)
+    n_f24 = conf_map.get("Fusto 24L", 0)
+    n_f25 = conf_map.get("Fusto 25L", 0)
+    n_f30 = conf_map.get("Fusto 30L", 0)
+
+    cotte_tot_n = int(df_cotte_anno.iloc[0]["num_cotte"])
+    litri_tot_cotte = float(df_cotte_anno.iloc[0]["tot_litri"])
+    tot_mc_gpl = float(df_cotte_anno.iloc[0]["tot_gas"])
+    tot_kwh_ele = float(df_cotte_anno.iloc[0]["tot_kwh"])
+    m_usato_tot = float(df_cotte_anno.iloc[0]["malto_usato"])
+    l_usato_tot = float(df_cotte_anno.iloc[0]["luppolo_usato"])
+    y_usato_tot_gr = float(df_cotte_anno.iloc[0]["lievito_usato"]) * 1000.0
+    resa_media_val = float(df_cotte_anno.iloc[0]["resa_media"])
+
+    m_acq_tot = float(df_mp_acq.iloc[0]["malto_acq"])
+    l_acq_tot = float(df_mp_acq.iloc[0]["luppolo_acq"])
+    y_acq_tot_gr = float(df_mp_acq.iloc[0]["lievito_acq"]) * 1000.0
+
+    st.markdown(f"### 🏛️ 1. Prospetto Bilancio Dogane Esercizio {anno_bilancio} (Invio entro 31 Gennaio)")
+    b_col1, b_col2, b_col3 = st.columns(3)
+    b_col1.metric("Cotte Realizzate", f"{cotte_tot_n}")
+    b_col2.metric("Litri Mosto Prodotti", f"{litri_tot_cotte:,.1f} LT")
+    b_col3.metric("Resa Media Sala Cottura", f"{resa_media_val:.1f}%")
+
+    be_1, be_2 = st.columns(2)
+    be_1.metric("Consumo Gas GPL / Metano", f"{tot_mc_gpl:,.2f} Smc")
+    be_2.metric("Consumo Energia Elettrica", f"{tot_kwh_ele:,.1f} kWh")
+
+    df_bmateria = pd.DataFrame([
+        {"Materia Prima": "Malto d'orzo & fermentabili", f"Acquistato nel {anno_bilancio}": f"{m_acq_tot:,.1f} kg", f"Utilizzato in Cotta ({anno_bilancio})": f"{m_usato_tot:,.1f} kg"},
+        {"Materia Prima": "Luppolo", f"Acquistato nel {anno_bilancio}": f"{l_acq_tot:,.2f} kg", f"Utilizzato in Cotta ({anno_bilancio})": f"{l_usato_tot:,.2f} kg"},
+        {"Materia Prima": "Lievito", f"Acquistato nel {anno_bilancio}": f"{y_acq_tot_gr:,.0f} gr", f"Utilizzato in Cotta ({anno_bilancio})": f"{y_usato_tot_gr:,.0f} gr"},
+    ])
+    st.table(df_bmateria)
+
+    st.markdown(f"##### 📦 Birra Condizionata nell'anno {anno_bilancio}")
+    st.write(f"• Bottiglie 0.33L: **{n_b33:,} pz** | • Bottiglie 0.75L: **{n_b75:,} pz**")
+    st.write(f"• Fusti 12L: **{n_f12}** | • Fusti 20L: **{n_f20}** | • Fusti 24L: **{n_f24}** | • Fusti 25L: **{n_f25}** | • Fusti 30L: **{n_f30}**")
+
+    pdf_dogane_bytes = genera_pdf_bilancio_dogane(
+        anno=str(anno_bilancio),
+        cotte_n=cotte_tot_n,
+        litri_cotte=litri_tot_cotte,
+        mc_gpl=tot_mc_gpl,
+        kwh_ele=tot_kwh_ele,
+        m_acq=m_acq_tot,
+        m_usat=m_usato_tot,
+        l_acq=l_acq_tot,
+        l_usat=l_usato_tot,
+        y_acq_g=y_acq_tot_gr,
+        y_usat_g=y_usato_tot_gr,
+        b33=n_b33,
+        b75=n_b75,
+        f12=n_f12,
+        f20=n_f20,
+        f24=n_f24,
+        f25=n_f25,
+        f30=n_f30,
+        giac_m=malto,
+        giac_l=luppolo,
+        giac_y=lievito,
+        giac_birra_lt=tot_litri_finiti,
+        resa_media=resa_media_val,
+        ragione_soc=RAGIONE_AZIENDA,
+        piva_az=PIVA_AZIENDA,
+    )
+
+    st.download_button(
+        label="📄 SCARICA BILANCIO FINANZIARIO DOGANE (PDF - Entro 31 Gennaio)",
+        data=pdf_dogane_bytes,
+        file_name="bilancio_finanziario.pdf",
+        mime="application/pdf",
+        type="primary"
+    )
+
+    st.divider()
+
+    # Prospetto Rimanenze Commercialista
+    st.markdown("### 💼 2. Prospetto Rimanenze Finali di Magazzino al 31/12 (Commercialista)")
+    costo_kg_m, costo_kg_l, costo_kg_y = 1.35, 28.00, 65.00
     val_m = malto * costo_kg_m
     val_l = luppolo * costo_kg_l
     val_y = lievito * costo_kg_y
     valore_tot_mp = val_m + val_l + val_y
 
-    st.markdown("### 🌾 1. Materie Prime in Giacenza")
-    df_mp_anteprima = pd.DataFrame([
-        {"Articolo": "Malto & Fermentabili", "Giacenza Fisica (kg)": f"{malto:.2f}", "Costo Unitario (€/kg)": f"{costo_kg_m:.2f}", "Valore Totale (€)": round(val_m, 2)},
-        {"Articolo": "Luppoli", "Giacenza Fisica (kg)": f"{luppolo:.2f}", "Costo Unitario (€/kg)": f"{costo_kg_l:.2f}", "Valore Totale (€)": round(val_l, 2)},
-        {"Articolo": "Lieviti", "Giacenza Fisica (kg)": f"{lievito:.3f}", "Costo Unitario (€/kg)": f"{costo_kg_y:.2f}", "Valore Totale (€)": round(val_y, 2)},
-    ])
-    st.dataframe(df_mp_anteprima, use_container_width=True)
-    st.info(f"**Subtotale Materie Prime: € {valore_tot_mp:,.2f}**")
-
-    st.markdown("### 📦 2. Imballaggi in Giacenza")
     with get_db_connection() as conn:
-        df_imb_anteprima = pd.read_sql_query("""
-            SELECT 
-                articolo as "Articolo Imballaggio",
-                SUM(CASE WHEN tipo_movimento='CARICO' THEN quantita ELSE -quantita END) as "Giacenza (pz)",
-                ROUND(MAX(costo_unitario)::numeric, 3) as "Costo Unitario (€)",
-                ROUND(SUM(CASE WHEN tipo_movimento='CARICO' THEN quantita ELSE -quantita END) * MAX(costo_unitario)::numeric, 2) as "Valore Totale (€)"
-            FROM imballaggi
+        df_imb_ant = pd.read_sql_query("""
+            SELECT articolo as "Articolo", SUM(CASE WHEN tipo_movimento='CARICO' THEN quantita ELSE -quantita END) as "Giacenza (pz)",
+                   ROUND(MAX(costo_unitario)::numeric, 3) as "Costo Unitario (€)",
+                   ROUND(SUM(CASE WHEN tipo_movimento='CARICO' THEN quantita ELSE -quantita END) * MAX(costo_unitario)::numeric, 2) as "Valore Totale (€)"
+            FROM imballaggi 
             WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL))
             GROUP BY articolo;
         """, conn, params=(AZIENDA_ID, AZIENDA_ID))
-    valore_tot_imb = float(df_imb_anteprima["Valore Totale (€)"].sum()) if not df_imb_anteprima.empty else 0.0
-    st.dataframe(df_imb_anteprima, use_container_width=True)
-    st.info(f"**Subtotale Imballaggi: € {valore_tot_imb:,.2f}**")
 
-    st.markdown("### 🍺 3. Prodotti Finiti")
-    with get_db_connection() as conn:
-        df_pf_anteprima = pd.read_sql_query("""
-            SELECT 
-                formato as "Formato",
-                SUM(CASE WHEN tipo='CARICO' THEN quantita ELSE -quantita END) as "Giacenza (pz)",
-                ROUND(SUM(CASE WHEN tipo='CARICO' THEN litri_totali ELSE -litri_totali END)::numeric, 1) as "Litri Totali",
-                ROUND(SUM(CASE WHEN tipo='CARICO' THEN (litri_totali * costo_produzione_litro) ELSE -(litri_totali * costo_produzione_litro) END)::numeric, 2) as "Costo Produzione (€)",
-                ROUND(SUM(CASE WHEN tipo='CARICO' THEN (litri_totali * grado_plato / 100.0 * %s) ELSE -(litri_totali * grado_plato / 100.0 * %s) END)::numeric, 2) as "Quota Accisa (€)",
-                ROUND(SUM(CASE WHEN tipo='CARICO' THEN (litri_totali * costo_produzione_litro + litri_totali * grado_plato / 100.0 * %s) ELSE -(litri_totali * costo_produzione_litro + litri_totali * grado_plato / 100.0 * %s) END)::numeric, 2) as "Valore Fiscale (€)"
-            FROM birra_condizionata
+        df_pf_ant = pd.read_sql_query("""
+            SELECT formato as "Formato", SUM(CASE WHEN tipo='CARICO' THEN quantita ELSE -quantita END) as "Giacenza (pz)",
+                   ROUND(SUM(CASE WHEN tipo='CARICO' THEN litri_totali ELSE -litri_totali END)::numeric, 1) as "Litri Totali",
+                   ROUND(SUM(CASE WHEN tipo='CARICO' THEN (litri_totali * costo_produzione_litro + litri_totali * grado_plato / 100.0 * %s) ELSE -(litri_totali * costo_produzione_litro + litri_totali * grado_plato / 100.0 * %s) END)::numeric, 2) as "Valore Fiscale (€)"
+            FROM birra_condizionata 
             WHERE (azienda_id=%s OR (%s=1 AND azienda_id IS NULL))
             GROUP BY formato;
-        """, conn, params=(ALIQUOTA_ACCISA_PLATO, ALIQUOTA_ACCISA_PLATO, ALIQUOTA_ACCISA_PLATO, ALIQUOTA_ACCISA_PLATO, AZIENDA_ID, AZIENDA_ID))
+        """, conn, params=(ALIQUOTA_ACCISA_PLATO, ALIQUOTA_ACCISA_PLATO, AZIENDA_ID, AZIENDA_ID))
 
-    litri_pf_val = float(df_pf_anteprima["Litri Totali"].sum()) if not df_pf_anteprima.empty else 0.0
-    costo_ind_val = float(df_pf_anteprima["Costo Produzione (€)"].sum()) if not df_pf_anteprima.empty else 0.0
-    accisa_assolta_val = float(df_pf_anteprima["Quota Accisa (€)"].sum()) if not df_pf_anteprima.empty else 0.0
-    valore_tot_pf = float(df_pf_anteprima["Valore Fiscale (€)"].sum()) if not df_pf_anteprima.empty else 0.0
+    val_imb_tot = float(df_imb_ant["Valore Totale (€)"].sum()) if not df_imb_ant.empty else 0.0
+    val_pf_tot = float(df_pf_ant["Valore Fiscale (€)"].sum()) if not df_pf_ant.empty else 0.0
+    tot_bilancio = valore_tot_mp + val_imb_tot + val_pf_tot
 
-    st.dataframe(df_pf_anteprima, use_container_width=True)
-    st.info(f"**Subtotale Prodotti Finiti: € {valore_tot_pf:,.2f}**")
+    st.write(f"• Valore Materie Prime: **€ {valore_tot_mp:,.2f}** | • Valore Imballaggi: **€ {val_imb_tot:,.2f}** | • Valore Birra Finita: **€ {val_pf_tot:,.2f}**")
+    st.success(f"💰 **TOTALE RIMANENZE FINALI AL 31/12: € {tot_bilancio:,.2f}**")
 
-    totale_bilancio_complessivo = valore_tot_mp + valore_tot_imb + valore_tot_pf
-
-    st.divider()
-    st.markdown(f"""
-        ### 💰 **TOTALE RIMANENZE FINALI AL 31/12: € {totale_bilancio_complessivo:,.2f}**
-        * **Materie Prime & Zuccheri:** € {valore_tot_mp:,.2f}
-        * **Imballaggi:** € {valore_tot_imb:,.2f}
-        * **Prodotti Finiti:** € {valore_tot_pf:,.2f}
-    """)
-
-    pdf_bytes = genera_pdf_commercialista(
-        valore_tot_mp,
-        valore_tot_imb,
-        valore_tot_pf,
-        totale_bilancio_complessivo,
-        malto,
-        luppolo,
-        lievito,
-        litri_pf_val,
-        costo_ind_val,
-        accisa_assolta_val,
-        RAGIONE_AZIENDA,
-        PIVA_AZIENDA,
+    pdf_comm_bytes = genera_pdf_commercialista(
+        valore_tot_mp, val_imb_tot, val_pf_tot, tot_bilancio,
+        malto, luppolo, lievito, tot_litri_finiti, 1.10, ALIQUOTA_ACCISA_PLATO,
+        RAGIONE_AZIENDA, PIVA_AZIENDA
     )
 
     st.download_button(
-        label="📄 SCARICA REPORT UFFICIALE 31/12 (PDF)",
-        data=pdf_bytes,
+        label="📄 SCARICA PROSPETTO RIMANENZE 31/12 (PDF Commercialista)",
+        data=pdf_comm_bytes,
         file_name="Prospetto_Rimanenze_31_12_Commercialista.pdf",
-        mime="application/pdf",
+        mime="application/pdf"
     )

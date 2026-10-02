@@ -9,24 +9,23 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 import streamlit as st
 from fpdf import FPDF
-from PIL import Image
 
-# --- CONFIGURAZIONE BRANDING BREWDESK ---
-LOGO_PATH = "logo.png"
-icona_app = Image.open(LOGO_PATH) if os.path.exists(LOGO_PATH) else "🍺"
+# --- CONFIGURAZIONE BRANDING BREWDESK & LOGO ---
+URL_LOGO_GITHUB = "https://raw.githubusercontent.com/antonobile/gestionale-birrificio/main/logo.png"
+LOGO_IMG = "logo.png" if os.path.exists("logo.png") else URL_LOGO_GITHUB
 
 st.set_page_config(
     page_title="BrewDesk - Brewery Management Platform",
-    page_icon=icona_app,
+    page_icon=LOGO_IMG,
     layout="wide"
 )
 
-# Tag PWA e Favicon per browser e desktop
+# Tag PWA e Favicon per browser e installazione Desktop
 st.markdown(
-    """
+    f"""
     <head>
-        <link rel="icon" type="image/png" href="logo.png">
-        <link rel="apple-touch-icon" href="logo.png">
+        <link rel="icon" type="image/png" href="{URL_LOGO_GITHUB}">
+        <link rel="apple-touch-icon" href="{URL_LOGO_GITHUB}">
     </head>
     """,
     unsafe_allow_html=True,
@@ -45,8 +44,10 @@ if "autenticato" not in st.session_state:
 if not st.session_state["autenticato"]:
     col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
     with col_l2:
-        if os.path.exists(LOGO_PATH):
-            st.image(LOGO_PATH, width=120)
+        try:
+            st.image(LOGO_IMG, width=120)
+        except Exception:
+            pass
         st.title("🔒 BrewDesk - Accesso Piattaforma")
         with st.form("login_form"):
             username_inserito = st.text_input("Nome Utente / Username")
@@ -62,8 +63,10 @@ if not st.session_state["autenticato"]:
     st.stop()
 
 # --- BARRA LATERALE CON BRANDING BREWDESK ---
-if os.path.exists(LOGO_PATH):
-    st.sidebar.image(LOGO_PATH, width=150)
+try:
+    st.sidebar.image(LOGO_IMG, width=150)
+except Exception:
+    pass
 st.sidebar.markdown("### **BrewDesk**")
 st.sidebar.caption("Brewery SaaS Management System")
 st.sidebar.markdown(f"👤 **Operatore:** `{st.session_state['utente_connesso']}`")
@@ -428,10 +431,12 @@ def genera_pdf_commercialista(val_mp, val_imb, val_pf, tot_bilancio, malto, lupp
     return bytes(pdf.output())
 
 # --- HEADER PRINCIPALE DELL'APP ---
-col_head1, col_head2 = st.columns([1, 8])
+col_head1, col_head2 = st.columns([1.2, 8])
 with col_head1:
-    if os.path.exists(LOGO_PATH):
-        st.image(LOGO_PATH, width=80)
+    try:
+        st.image(LOGO_IMG, width=90)
+    except Exception:
+        pass
 with col_head2:
     st.title("BrewDesk — Microbrewery Management")
 
@@ -1079,7 +1084,7 @@ with tab5:
 
 # TAB 6: GIACENZE MAGAZZINO & ELIMINAZIONE MOVIMENTI
 with tab6:
-    st.subheader("🏛️ Giacenze Magazzino Birra Pronta & Prodotti Finiti")
+    st.subheader("🏛️️ Giacenze Magazzino Birra Pronta & Prodotti Finiti")
     st.write("Consistenze aggiornate in tempo reale da cotte, confezionamenti e scarichi XML.")
 
     with get_db_connection() as conn:
@@ -1283,7 +1288,7 @@ with tab8:
                 articolo as "Articolo Imballaggio",
                 SUM(CASE WHEN tipo_movimento='CARICO' THEN quantita ELSE -quantita END) as "Giacenza (pz)",
                 ROUND(MAX(costo_unitario)::numeric, 3) as "Costo Unitario (€)",
-                ROUND(SUM(CASE WHEN tipo_movimento='CARICO' THEN quantita ELSE -quantita END) * MAX(costo_unitario), 2) as "Valore Totale (€)"
+                ROUND(SUM(CASE WHEN tipo_movimento='CARICO' THEN quantita ELSE -quantita END) * MAX(costo_unitario)::numeric, 2) as "Valore Totale (€)"
             FROM imballaggi
             GROUP BY articolo;
         """, conn)

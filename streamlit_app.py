@@ -321,7 +321,7 @@ END:VCALENDAR"""
 
 st.title("🍺 Gestionale Birrificio Nobile & Registri Fiscali")
 
-# --- QUERY DI RIEPILOGO TESTATA ---
+# --- QUERY DI RIEPILOGO TESTATA (DINAMICA E SEMPRE ALLINEATA) ---
 with get_db_connection() as conn:
     with conn.cursor() as c:
         c.execute("""
@@ -365,7 +365,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📑 Report 31/12 Commercialista",
 ])
 
-# TAB 1: CARICO ACQUISTI XML
+# TAB 1: CARICO ACQUISTI XML CON RICONOSCIMENTO DUPLICATI
 with tab1:
     st.subheader("Carico Automatico Materie Prime da Fatture XML Fornitori")
     st.write("Trascina qui le fatture XML ricevute dai fornitori di malto, luppolo e lievito.")
@@ -409,6 +409,14 @@ with tab1:
 
                         num_doc = trova_testo_nodo(root, ["Numero"]) or "N.D."
                         data_doc = trova_testo_nodo(root, ["Data"]) or pd.Timestamp.now().strftime("%Y-%m-%d")
+                        rif_fattura = f"Fatt. {num_doc}"
+
+                        # CONTROLLO DUPLICATO: Verifica se il documento esiste già
+                        c.execute("SELECT id FROM materie_prime WHERE riferimento=%s AND azienda=%s LIMIT 1;", (rif_fattura, mittente))
+                        esiste = c.fetchone()
+                        if esiste:
+                            st.warning(f"⚠️ Documento XML N. {num_doc} ({mittente}) già caricato precedentemente! File saltato per evitare duplicati.")
+                            continue
 
                         t_m, t_l, t_y = 0.0, 0.0, 0.0
                         for el in root.iter():
@@ -431,7 +439,7 @@ with tab1:
                             INSERT INTO materie_prime (tipo, data, riferimento, azienda, malto_kg, luppolo_kg, lievito_kg, costo_kg_medio)
                             VALUES ('CARICO', %s, %s, %s, %s, %s, %s, %s);
                             """,
-                            (data_doc, f"Fatt. {num_doc}", mittente, t_m, t_l, t_y, c_medio),
+                            (data_doc, rif_fattura, mittente, t_m, t_l, t_y, c_medio),
                         )
                         carichi_mp += 1
                         tot_m += t_m
@@ -441,8 +449,32 @@ with tab1:
                         st.error(f"Errore su {up_xml.name}: {e}")
                 conn.commit()
 
-        st.success(f"Caricate {carichi_mp} fatture: +{tot_m:.1f} kg Malto, +{tot_l:.2f} kg Luppolo, +{tot_y:.2f} kg Lievito.")
-        st.rerun()
+        if carichi_mp > 0:
+            st.success(f"Caricate {carichi_mp} nuove fatture: +{tot_m:.1f} kg Malto, +{tot_l:.2f} kg Luppolo, +{tot_y:.2f} kg Lievito.")
+            st.rerun()
+
+    st.write("---")
+    st.markdown("#### 📋 Storico Movimentazioni Materie Prime & Correzione Doppioni")
+    with get_db_connection() as conn:
+        df_mp_mov = pd.read_sql_query("SELECT id, data as \"Data\", tipo as \"Tipo Movimento\", riferimento as \"Riferimento\", azienda as \"Azienda / Cotta\", malto_kg as \"Kg Malto\", luppolo_kg as \"Kg Luppolo\", lievito_kg as \"Kg Lievito\" FROM materie_prime ORDER BY id DESC;", conn)
+    st.dataframe(df_mp_mov, use_container_width=True)
+
+    if not df_mp_mov.empty:
+        col_m_del1, col_m_del2 = st.columns([3, 1])
+        with col_m_del1:
+            opzioni_mp_del = [f"ID {r['id']} | {r['Data']} - {r['Tipo Movimento']} - {r['Azienda / Cotta']} (Malto: {r['Kg Malto']} kg, Luppolo: {r['Kg Luppolo']} kg)" for _, r in df_mp_mov.iterrows()]
+            sel_mp = st.selectbox("Seleziona il movimento materie prime da eliminare (es. cotta registrata due volte):", opzioni_mp_del)
+            id_mp_da_cancellare = int(sel_mp.split("|")[0].replace("ID", "").strip())
+        with col_m_del2:
+            st.write("")
+            st.write("")
+            if st.button("🗑️ Elimina Movimento MP", type="primary"):
+                with get_db_connection() as conn:
+                    with conn.cursor() as c:
+                        c.execute("DELETE FROM materie_prime WHERE id=%s;", (id_mp_da_cancellare,))
+                    conn.commit()
+                st.success(f"Movimento Materie Prime ID {id_mp_da_cancellare} eliminato! Ricalcolo kg completato.")
+                st.rerun()
 
 # TAB 2: IMBALLAGGI
 with tab2:
@@ -502,7 +534,7 @@ with tab2:
         )
         st.dataframe(df_imb, use_container_width=True)
 
-# TAB 3: COTTA & SALA COTTURA (CON MODIFICA ED ELIMINAZIONE)
+# TAB 3: COTTA & SALA COTTURA (CON GESTIONE COMPLETA)
 with tab3:
     st.subheader("⚗️ Sala Cottura: Inserimento & Gestione Lotti Cotte")
     
@@ -512,7 +544,7 @@ with tab3:
     modalita_cotta = st.radio("Azione:", ["➕ Registra Nuova Cotta", "✏️ Modifica Cotta Esistente", "🗑️ Elimina Cotta Errata"], horizontal=True)
 
     if modalita_cotta == "🗑️ Elimina Cotta Errata":
-        st.warning("⚠️ L'eliminazione rimuoverà la cotta selezionata dal registro.")
+        st.warning("⚠️ L'eliminazione rimuoverà la cotta selezionata dal registro mosti.")
         if not df_cotte_all.empty:
             scelte_cotte_del = [f"ID {r['id']} | Cotta {r['cotta_num']} - Lotto {r['lotto_sfuso']} ({r['tipo_birra']}) - {r['data']}" for _, r in df_cotte_all.iterrows()]
             sel_del = st.selectbox("Seleziona la cotta da eliminare:", scelte_cotte_del)
@@ -749,7 +781,7 @@ with tab4:
             st.success(f"Caricati a magazzino {litri_ottenuti:.1f} LT effettivi ({qta_c} pezzi {fmt}) con scarto registrato di {scarto_litri:.1f} LT!")
             st.rerun()
 
-# TAB 5: VENDITE (XML & MANUALE)
+# TAB 5: VENDITE (XML CON CONTROLLO DUPLICATI & MANUALE)
 with tab5:
     st.subheader("🚚 Scarico Vendite Birra")
 
@@ -793,6 +825,13 @@ with tab5:
 
                         num_doc = trova_testo_nodo(root, ["Numero"]) or "N.D."
                         data_doc = trova_testo_nodo(root, ["Data"]) or pd.Timestamp.now().strftime("%Y-%m-%d")
+                        rif_vendita = f"Fatt. {num_doc} - {cliente}"
+
+                        # CONTROLLO DUPLICATO VENDITE: Verifica se il documento è già stato elaborato
+                        c.execute("SELECT id FROM birra_condizionata WHERE documento_rif=%s LIMIT 1;", (rif_vendita,))
+                        if c.fetchone():
+                            st.warning(f"⚠️ Fattura di Vendita XML N. {num_doc} ({cliente}) già caricata! File ignorato per evitare scarichi doppi.")
+                            continue
 
                         for el in root.iter():
                             tag_linea = el.tag.split("}")[-1] if "}" in el.tag else el.tag
@@ -807,7 +846,6 @@ with tab5:
                                 if info_birra:
                                     formato_v, litri_un = info_birra
                                     litri_riga = qta * litri_un
-                                    rif_vendita = f"Fatt. {num_doc} - {cliente}"
 
                                     c.execute(
                                         """
@@ -834,8 +872,6 @@ with tab5:
             st.success(f"Registrati con successo {tot_scarichi} scarichi per complessivi {tot_litri:.1f} Litri venduti!")
             st.dataframe(pd.DataFrame(righe_elaborate), use_container_width=True)
             st.rerun()
-        else:
-            st.warning("Nessuna riga di birra riconosciuta nei file XML caricati.")
 
     st.write("---")
     st.markdown("### ✍️ 2. Scarico Vendita Manuale")
@@ -865,7 +901,7 @@ with tab5:
 
 # TAB 6: GIACENZE MAGAZZINO & ELIMINAZIONE MOVIMENTI
 with tab6:
-    st.subheader("🏛️ Giacenze Magazzino Birra Pronta & Prodotti Finiti")
+    st.subheader("🏛️️ Giacenze Magazzino Birra Pronta & Prodotti Finiti")
     st.write("Consistenze aggiornate in tempo reale da cotte, confezionamenti e scarichi XML.")
 
     with get_db_connection() as conn:
@@ -906,7 +942,6 @@ with tab6:
         )
         st.dataframe(df_dettaglio_lotti, use_container_width=True)
 
-        # SEZIONE PER ELIMINARE MOVIMENTI ERRATI
         st.markdown("#### 🗑️ Elimina Movimento Errato (Correzione Magazzino)")
         if not df_dettaglio_lotti.empty:
             col_del1, col_del2 = st.columns([3, 1])
@@ -918,7 +953,7 @@ with tab6:
                 sel_mov = st.selectbox("Seleziona il movimento errato da eliminare:", opzioni_mov_del)
                 id_mov_da_cancellare = int(sel_mov.split("|")[0].replace("ID", "").strip())
             with col_del2:
-                st.write("") # spaziatore
+                st.write("")
                 st.write("")
                 if st.button("🗑️ Elimina Movimento", type="primary"):
                     with conn.cursor() as c:

@@ -639,7 +639,7 @@ with tab3:
             conn.commit()
         st.rerun()
 
-# TAB 4: CONFEZIONAMENTO
+# TAB 4: CONFEZIONAMENTO (CON MODIFICA MANUALE LITRI EFFETTIVI E SCARTO)
 with tab4:
     st.subheader("📦 Confezionamento Birra & Carico Prodotti Finiti")
     
@@ -669,9 +669,10 @@ with tab4:
                 ["Fusto 20L", "Fusto 24L", "Fusto 25L", "Fusto 30L", "Bottiglia 0.33L", "Bottiglia 0.75L"],
             )
         with col_f2:
-            qta_c = st.number_input("Numero Contenitori / Pezzi Confezionati", min_value=1, step=1, value=10)
+            qta_c = st.number_input("Numero Contenitori / Pezzi Confezionati", min_value=1, step=1, value=5)
             costo_prod_lt = st.number_input("Costo Unitario Produzione (€/Litro)", min_value=0.1, value=1.10, step=0.05)
 
+        # Mappatura teorica litri nominali
         litri_unitari = {
             "Fusto 20L": 20.0,
             "Fusto 24L": 24.0,
@@ -680,15 +681,35 @@ with tab4:
             "Bottiglia 0.33L": 0.33,
             "Bottiglia 0.75L": 0.75,
         }
-        litri_ottenuti = qta_c * litri_unitari[fmt]
-        ettogradi_calc = (litri_ottenuti * plato_riferimento) / 100.0
-        scarto_litri = max(0.0, litri_mosto_iniziali - litri_ottenuti)
+        litri_teorici_proposti = float(qta_c * litri_unitari[fmt])
+        scarto_teorico_proposto = max(0.0, float(litri_mosto_iniziali - litri_teorici_proposti))
 
         st.write("---")
-        c_m1, c_m2, c_m3 = st.columns(3)
-        c_m1.metric("Litri Birra Confezionata", f"{litri_ottenuti:.1f} LT")
-        c_m2.metric("Ettogradi Fiscali (°E)", f"{ettogradi_calc:.2f} °E")
-        c_m3.metric("Scarto Finale (Litri Persi)", f"{scarto_litri:.1f} LT", delta=f"-{scarto_litri:.1f} LT", delta_color="inverse")
+        st.markdown("#### ⚖️ Volumi Reali Effettivi (Modificabili)")
+        col_v1, col_v2, col_v3 = st.columns(3)
+        with col_v1:
+            # Campo manuale per sovrascrivere i litri (es. 119 LT invece di 100 LT)
+            litri_ottenuti = st.number_input(
+                "Litri Effettivi Confezionati (LT)",
+                min_value=0.0,
+                step=1.0,
+                value=litri_teorici_proposti,
+                help="Puoi modificare questo valore se un fusto o una bottiglia non è a volume pieno nominale."
+            )
+        with col_v2:
+            # Calcolo dinamico ettogradi sui litri reali
+            ettogradi_calc = (litri_ottenuti * plato_riferimento) / 100.0
+            st.metric("Ettogradi Fiscali (°E)", f"{ettogradi_calc:.2f} °E")
+        with col_v3:
+            # Campo manuale per impostare lo scarto effettivo (es. 0 LT se è stato recuperato tutto)
+            scarto_calcolato_suggerito = max(0.0, float(litri_mosto_iniziali - litri_ottenuti))
+            scarto_litri = st.number_input(
+                "Scarto Finale Reale (Litri Persi)",
+                min_value=0.0,
+                step=0.5,
+                value=scarto_calcolato_suggerito,
+                help="Imposta a 0 se l'intero mosto è stato recuperato senza perdite."
+            )
 
         if st.form_submit_button("Carica a Magazzino Prodotti Finiti"):
             data_imb_str = data_imbottigliamento.strftime("%Y-%m-%d")
@@ -702,6 +723,7 @@ with tab4:
                         (data_imb_str, lotto_c, fmt, qta_c, litri_ottenuti, plato_riferimento, ettogradi_calc, scarto_litri, costo_prod_lt),
                     )
 
+                    # Scarico imballaggi in base ai pezzi reali
                     if "Bottiglia" in fmt:
                         art_bot = f"Bottiglie {fmt.split()[-1]} vuote"
                         c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', %s, %s, %s, %s);", (data_imb_str, f"Lotto {lotto_c}", art_bot, qta_c))
@@ -712,9 +734,8 @@ with tab4:
                         c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', %s, %s, %s, %s);", (data_imb_str, f"Lotto {lotto_c}", art_fusto, qta_c))
 
                 conn.commit()
-            st.success(f"Caricati a magazzino {litri_ottenuti:.1f} LT nel formato {fmt}!")
+            st.success(f"Caricati a magazzino {litri_ottenuti:.1f} LT effettivi ({qta_c} pezzi {fmt}) con scarto registrato di {scarto_litri:.1f} LT!")
             st.rerun()
-
 # TAB 5: VENDITE (XML & MANUALE)
 with tab5:
     st.subheader("🚚 Scarico Vendite Birra")

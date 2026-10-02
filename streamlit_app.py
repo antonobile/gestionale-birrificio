@@ -171,7 +171,7 @@ def init_db():
 
 init_db()
 
-# --- FUNZIONI CACHE RAPIDE (VELOCITÀ ISTANTANEA SENZA LAG) ---
+# --- FUNZIONI CACHE RAPIDE ---
 @st.cache_data(ttl=60)
 def get_cached_riepilogo():
     with get_db_connection() as conn:
@@ -400,7 +400,7 @@ def genera_pdf_commercialista(val_mp, val_imb, val_pf, tot_bilancio, malto, lupp
 
     return bytes(pdf.output())
 
-# --- INTESTAZIONE CON CARICAMENTO IMMEDIATO DA RAM ---
+# --- INTESTAZIONE APP ---
 st.title("🍺 Gestionale Birrificio Nobile & Registri Fiscali")
 
 malto, luppolo, lievito, tot_confezioni, tot_litri_finiti = get_cached_riepilogo()
@@ -417,17 +417,17 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📥 Carico Acquisti XML",
     "🏷️ Imballaggi",
     "⚗️ Cotta & Sala Cottura",
-    "📦 Confezionamento",
+    "📦 Confezionamento Misto",
     "🚚 Vendite (XML & Manuale)",
     "🏛️ Giacenze Magazzino",
     "⏰ Scadenze Accise (2803 / 2813)",
     "📑 Report 31/12 Commercialista",
 ])
 
-# TAB 1: CARICO ACQUISTI XML CON COSTI SINGOLI
+# TAB 1: CARICO ACQUISTI XML
 with tab1:
     st.subheader("Carico Automatico Materie Prime & Visore Costi da Fatture XML")
-    st.write("Trascina i file XML dei fornitori. Verranno memorizzati automaticamente quantitativi e costi reali d'acquisto.")
+    st.write("Trascina i file XML dei fornitori per caricare scorte e prezzi reali d'acquisto.")
 
     up_xmls = st.file_uploader(
         "Seleziona i file XML fornitori",
@@ -473,7 +473,7 @@ with tab1:
                         c.execute("SELECT id FROM materie_prime WHERE riferimento=%s AND azienda=%s LIMIT 1;", (rif_fattura, mittente))
                         esiste = c.fetchone()
                         if esiste:
-                            st.warning(f"⚠️ Documento XML N. {num_doc} ({mittente}) già caricato precedentemente! File saltato per evitare duplicati.")
+                            st.warning(f"⚠️ Documento XML N. {num_doc} ({mittente}) già caricato precedentemente! File saltato.")
                             continue
 
                         t_m, t_l, t_y = 0.0, 0.0, 0.0
@@ -617,7 +617,7 @@ with tab2:
         )
         st.dataframe(df_imb, use_container_width=True)
 
-# TAB 3: COTTA & VISORE COSTI AUTOMATICO
+# TAB 3: COTTA & SALA COTTURA
 with tab3:
     st.subheader("⚗️ Sala Cottura: Inserimento Cotta & Calcolo Costo Reale al Litro")
     
@@ -806,16 +806,17 @@ with tab3:
             st.cache_data.clear()
             st.rerun()
 
-# TAB 4: CONFEZIONAMENTO
+# TAB 4: CONFEZIONAMENTO MISTO (FUSTI + BOTTIGLIE NELLA STESSA COTTA)
 with tab4:
-    st.subheader("📦 Confezionamento Birra & Carico Prodotti Finiti")
+    st.subheader("📦 Confezionamento Misto Cotta (Fusti e Bottiglie Simultanei)")
+    st.write("Puoi confezionare una cotta suddividendola tra più formati (fusti e bottiglie insieme). Inserisci le quantità utilizzate:")
     
     with get_db_connection() as conn:
         df_mosti = pd.read_sql_query("SELECT id, cotta_num, lotto_sfuso, tipo_birra, litri_mosto, grado_plato, costo_litro_mosto FROM registro_mosto ORDER BY id DESC LIMIT 25;", conn)
 
     if not df_mosti.empty:
         opzioni_cotte = [f"ID {r['id']} | Cotta {r['cotta_num']} ({r['tipo_birra']}) - {r['litri_mosto']} LT - °P {r['grado_plato']}" for _, r in df_mosti.iterrows()]
-        cotta_scelta = st.selectbox("Seleziona il Lotto di Cotta da Confezionare:", opzioni_cotte)
+        cotta_scelta = st.selectbox("Seleziona la Cotta da Confezionare:", opzioni_cotte)
         id_cotta = int(cotta_scelta.split("|")[0].replace("ID", "").strip())
         row_sel = df_mosti[df_mosti["id"] == id_cotta].iloc[0]
         litri_mosto_iniziali = float(row_sel["litri_mosto"])
@@ -828,79 +829,107 @@ with tab4:
         lotto_predefinito = "LOTTO-2601"
         costo_suggerito_lt = 1.10
 
-    with st.form("conf_form_nuovo"):
-        col_f1, col_f2 = st.columns(2)
-        with col_f1:
-            data_imbottigliamento = st.date_input("Data Imbottigliamento / Infustamento", value=datetime.now())
-            lotto_c = st.text_input("Riferimento Lotto Confezionato", value=lotto_predefinito)
-            fmt = st.selectbox(
-                "Tipo Contenitore / Formato",
-                ["Fusto 20L", "Fusto 24L", "Fusto 25L", "Fusto 30L", "Bottiglia 0.33L", "Bottiglia 0.75L"],
-            )
-        with col_f2:
-            qta_c = st.number_input("Numero Contenitori / Pezzi Confezionati", min_value=1, step=1, value=5)
-            costo_prod_lt = st.number_input("Costo Unitario Produzione (€/Litro)", min_value=0.01, value=costo_suggerito_lt if costo_suggerito_lt > 0 else 1.10, step=0.05)
-
-        litri_unitari = {
-            "Fusto 20L": 20.0,
-            "Fusto 24L": 24.0,
-            "Fusto 25L": 25.0,
-            "Fusto 30L": 30.0,
-            "Bottiglia 0.33L": 0.33,
-            "Bottiglia 0.75L": 0.75,
-        }
-        litri_teorici_proposti = float(qta_c * litri_unitari[fmt])
-        scarto_teorico_proposto = max(0.0, float(litri_mosto_iniziali - litri_teorici_proposti))
+    with st.form("conf_form_misto"):
+        col_gen1, col_gen2, col_gen3 = st.columns(3)
+        with col_gen1:
+            data_imbottigliamento = st.date_input("Data Confezionamento", value=datetime.now())
+        with col_gen2:
+            lotto_c = st.text_input("Lotto Confezionato", value=lotto_predefinito)
+        with col_gen3:
+            costo_prod_lt = st.number_input("Costo Produzione (€/Litro)", min_value=0.01, value=costo_suggerito_lt if costo_suggerito_lt > 0 else 1.10, step=0.05)
 
         st.write("---")
-        st.markdown("#### ⚖️ Volumi Reali Effettivi (Modificabili a mano)")
-        col_v1, col_v2, col_v3 = st.columns(3)
-        with col_v1:
-            litri_ottenuti = st.number_input(
-                "Litri Effettivi Confezionati (LT)",
+        st.markdown("#### 🛢️ 1. Quantità Fusti Confezionati")
+        cf1, cf2, cf3, cf4 = st.columns(4)
+        with cf1:
+            q_f20 = st.number_input("N° Fusti 20L", min_value=0, step=1, value=0)
+        with cf2:
+            q_f24 = st.number_input("N° Fusti 24L", min_value=0, step=1, value=0)
+        with cf3:
+            q_f25 = st.number_input("N° Fusti 25L", min_value=0, step=1, value=0)
+        with cf4:
+            q_f30 = st.number_input("N° Fusti 30L", min_value=0, step=1, value=0)
+
+        st.markdown("#### 🍾 2. Quantità Bottiglie Confezionate")
+        cb1, cb2 = st.columns(2)
+        with cb1:
+            q_b33 = st.number_input("N° Bottiglie 0.33L (pezzi singoli)", min_value=0, step=12, value=0)
+        with cb2:
+            q_b75 = st.number_input("N° Bottiglie 0.75L (pezzi singoli)", min_value=0, step=6, value=0)
+
+        # Calcolo volumetrico complessivo
+        litri_fusti = (q_f20 * 20.0) + (q_f24 * 24.0) + (q_f25 * 25.0) + (q_f30 * 30.0)
+        litri_bottiglie = (q_b33 * 0.33) + (q_b75 * 0.75)
+        litri_totali_calcolati = litri_fusti + litri_bottiglie
+        scarto_suggerito = max(0.0, litri_mosto_iniziali - litri_totali_calcolati)
+
+        st.write("---")
+        st.markdown("#### ⚖️ Riepilogo Volumi & Scarto Reale (Modificabili a mano)")
+        c_v1, c_v2, c_v3 = st.columns(3)
+        with c_v1:
+            litri_effettivi = st.number_input(
+                "Litri Totali Confezionati (LT)",
                 min_value=0.0,
                 step=1.0,
-                value=litri_teorici_proposti,
-                help="Puoi correggere questo valore se un fusto contiene ad esempio 19 litri invece di 20."
+                value=float(litri_totali_calcolati),
+                help="Se hai recuperato più o meno birra rispetto alla capienza nominale, correggi qui."
             )
-        with col_v2:
-            ettogradi_calc = (litri_ottenuti * plato_riferimento) / 100.0
-            st.metric("Ettogradi Fiscali (°E)", f"{ettogradi_calc:.2f} °E")
-        with col_v3:
-            scarto_calcolato_suggerito = max(0.0, float(litri_mosto_iniziali - litri_ottenuti))
-            scarto_litri = st.number_input(
+        with c_v2:
+            ettogradi_calc = (litri_effettivi * plato_riferimento) / 100.0
+            st.metric("Ettogradi Fiscali Complessivi (°E)", f"{ettogradi_calc:.2f} °E")
+        with c_v3:
+            scarto_reale = st.number_input(
                 "Scarto Finale Reale (Litri Persi)",
                 min_value=0.0,
                 step=0.5,
-                value=scarto_calcolato_suggerito,
-                help="Imposta a 0 se tutto il mosto è andato a finire nei contenitori."
+                value=float(scarto_suggerito),
+                help="Imposta a 0 se tutto il mosto è stato recuperato senza perdite."
             )
 
-        if st.form_submit_button("Carica a Magazzino Prodotti Finiti"):
-            data_imb_str = data_imbottigliamento.strftime("%Y-%m-%d")
-            with get_db_connection() as conn:
-                with conn.cursor() as c:
-                    c.execute(
-                        """
-                        INSERT INTO birra_condizionata (tipo, data, lotto, formato, quantita, litri_totali, grado_plato, ettogradi, scarto_litri, costo_produzione_litro, documento_rif)
-                        VALUES ('CARICO', %s, %s, %s, %s, %s, %s, %s, %s, %s, 'CONFEZIONAMENTO');
-                        """,
-                        (data_imb_str, lotto_c, fmt, qta_c, litri_ottenuti, plato_riferimento, ettogradi_calc, scarto_litri, costo_prod_lt),
-                    )
+        btn_confeziona = st.form_submit_button("Carica Tutti i Formati a Magazzino")
 
-                    if "Bottiglia" in fmt:
-                        art_bot = f"Bottiglie {fmt.split()[-1]} vuote"
-                        c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', %s, %s, %s, %s);", (data_imb_str, f"Lotto {lotto_c}", art_bot, qta_c))
-                        c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', %s, %s, 'Tappi a corona', %s);", (data_imb_str, f"Lotto {lotto_c}", qta_c))
-                        c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', %s, %s, 'Etichette', %s);", (data_imb_str, f"Lotto {lotto_c}", qta_c))
-                    elif "Fusto" in fmt:
-                        art_fusto = f"Fusti vuoti {fmt.split()[-1]}"
-                        c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', %s, %s, %s, %s);", (data_imb_str, f"Lotto {lotto_c}", art_fusto, qta_c))
+        if btn_confeziona:
+            if litri_effettivi <= 0:
+                st.error("Inserisci almeno una quantità maggiore di zero per fusti o bottiglie.")
+            else:
+                data_imb_str = data_imbottigliamento.strftime("%Y-%m-%d")
+                
+                # Proporzione per registrare le righe dei singoli formati a magazzino
+                fattore_correzione = (litri_effettivi / litri_totali_calcolati) if litri_totali_calcolati > 0 else 1.0
 
-                conn.commit()
-            st.cache_data.clear()
-            st.success(f"Caricati a magazzino {litri_ottenuti:.1f} LT effettivi ({qta_c} pezzi {fmt}) con scarto registrato di {scarto_litri:.1f} LT!")
-            st.rerun()
+                movimenti_da_creare = []
+                if q_f20 > 0: movimenti_da_creare.append(("Fusto 20L", q_f20, (q_f20 * 20.0) * fattore_correzione, "Fusti vuoti 20L"))
+                if q_f24 > 0: movimenti_da_creare.append(("Fusto 24L", q_f24, (q_f24 * 24.0) * fattore_correzione, "Fusti vuoti 24L"))
+                if q_f25 > 0: movimenti_da_creare.append(("Fusto 25L", q_f25, (q_f25 * 25.0) * fattore_correzione, "Fusti vuoti 25L"))
+                if q_f30 > 0: movimenti_da_creare.append(("Fusto 30L", q_f30, (q_f30 * 30.0) * fattore_correzione, "Fusti vuoti 30L"))
+                if q_b33 > 0: movimenti_da_creare.append(("Bottiglia 0.33L", q_b33, (q_b33 * 0.33) * fattore_correzione, "Bottiglie 0.33L vuote"))
+                if q_b75 > 0: movimenti_da_creare.append(("Bottiglia 0.75L", q_b75, (q_b75 * 0.75) * fattore_correzione, "Bottiglie 0.75L vuote"))
+
+                with get_db_connection() as conn:
+                    with conn.cursor() as c:
+                        for i, (fmt, qta, lt_riga, art_imb) in enumerate(movimenti_da_creare):
+                            # Assegna lo scarto sulla prima riga per evitare duplicazioni di scarto
+                            scarto_riga = scarto_reale if i == 0 else 0.0
+                            etto_riga = (lt_riga * plato_riferimento) / 100.0
+
+                            c.execute(
+                                """
+                                INSERT INTO birra_condizionata (tipo, data, lotto, formato, quantita, litri_totali, grado_plato, ettogradi, scarto_litri, costo_produzione_litro, documento_rif)
+                                VALUES ('CARICO', %s, %s, %s, %s, %s, %s, %s, %s, %s, 'CONFEZIONAMENTO');
+                                """,
+                                (data_imb_str, lotto_c, fmt, qta, lt_riga, plato_riferimento, etto_riga, scarto_riga, costo_prod_lt),
+                            )
+
+                            # Scarico imballaggi corrispondenti
+                            c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', %s, %s, %s, %s);", (data_imb_str, f"Lotto {lotto_c}", art_imb, qta))
+                            if "Bottiglia" in fmt:
+                                c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', %s, %s, 'Tappi a corona', %s);", (data_imb_str, f"Lotto {lotto_c}", qta))
+                                c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', %s, %s, 'Etichette', %s);", (data_imb_str, f"Lotto {lotto_c}", qta))
+
+                    conn.commit()
+                st.cache_data.clear()
+                st.success(f"Confezionamento misto registrato! Caricati {litri_effettivi:.1f} LT complessivi suddivisi tra i formati scelti con scarto di {scarto_reale:.1f} LT.")
+                st.rerun()
 
 # TAB 5: VENDITE (XML & MANUALE)
 with tab5:
@@ -950,7 +979,7 @@ with tab5:
 
                         c.execute("SELECT id FROM birra_condizionata WHERE documento_rif=%s LIMIT 1;", (rif_vendita,))
                         if c.fetchone():
-                            st.warning(f"⚠️ Fattura di Vendita XML N. {num_doc} ({cliente}) già caricata! File ignorato per evitare scarichi doppi.")
+                            st.warning(f"⚠️ Fattura di Vendita XML N. {num_doc} ({cliente}) già caricata! File ignorato.")
                             continue
 
                         for el in root.iter():
@@ -1023,7 +1052,7 @@ with tab5:
 
 # TAB 6: GIACENZE MAGAZZINO & ELIMINAZIONE MOVIMENTI
 with tab6:
-    st.subheader("🏛️ Giacenze Magazzino Birra Pronta & Prodotti Finiti")
+    st.subheader("🏛️️ Giacenze Magazzino Birra Pronta & Prodotti Finiti")
     st.write("Consistenze aggiornate in tempo reale da cotte, confezionamenti e scarichi XML.")
 
     with get_db_connection() as conn:
@@ -1178,7 +1207,6 @@ with tab7:
                         key=f"ics_{r['id']}",
                     )
             
-            # --- ELIMINAZIONE SCADENZA ERRATA ---
             st.write("---")
             st.markdown("#### 🗑️ Cancella Scadenza Errata")
             opzioni_del_scad = [
@@ -1188,7 +1216,7 @@ with tab7:
             scad_sel_del = st.selectbox("Seleziona la scadenza da cancellare:", opzioni_del_scad)
             id_scad_da_eliminare = int(scad_sel_del.split("|")[0].replace("ID", "").strip())
             
-            if st.button("🗑️️ Elimina Scadenza Selezionata", type="primary"):
+            if st.button("🗑️ Elimina Scadenza Selezionata", type="primary"):
                 with get_db_connection() as conn:
                     with conn.cursor() as c:
                         c.execute("DELETE FROM scadenze_accise WHERE id=%s;", (id_scad_da_eliminare,))
@@ -1228,7 +1256,7 @@ with tab8:
                 articolo as "Articolo Imballaggio",
                 SUM(CASE WHEN tipo_movimento='CARICO' THEN quantita ELSE -quantita END) as "Giacenza (pz)",
                 ROUND(MAX(costo_unitario)::numeric, 3) as "Costo Unitario (€)",
-                ROUND(SUM(CASE WHEN tipo_movimento='CARICO' THEN quantita ELSE -quantita END) * MAX(costo_unitario)::numeric, 2) as "Valore Totale (€)"
+                ROUND(SUM(CASE WHEN tipo_movimento='CARICO' THEN quantita ELSE -quantita END) * MAX(costo_unitario), 2) as "Valore Totale (€)"
             FROM imballaggi
             GROUP BY articolo;
         """, conn)

@@ -245,7 +245,6 @@ def init_db():
                 );
             """)
 
-            # Migrazioni progressive sicure
             c.execute("ALTER TABLE registro_mosto ADD COLUMN IF NOT EXISTS data_preventiva TEXT DEFAULT '';")
             c.execute("ALTER TABLE registro_mosto ADD COLUMN IF NOT EXISTS consumo_gas_mc NUMERIC DEFAULT 0;")
             c.execute("ALTER TABLE registro_mosto ADD COLUMN IF NOT EXISTS consumo_elettrico_kwh NUMERIC DEFAULT 0;")
@@ -269,7 +268,7 @@ def init_db():
 init_db()
 
 # --- FUNZIONI CACHE RAPIDE ---
-@st.cache_data(ttl=20)
+@st.cache_data(ttl=15)
 def get_cached_riepilogo():
     with get_db_connection() as conn:
         with conn.cursor() as c:
@@ -288,12 +287,14 @@ def get_cached_riepilogo():
                 FROM birra_condizionata;
             """)
             bc = c.fetchone()
+            c.execute("SELECT COALESCE(SUM(litri_mosto), 0) FROM registro_mosto;")
+            tot_mosto_lordo = c.fetchone()[0] or 0.0
             c.execute("""
                 SELECT COALESCE(SUM(CASE WHEN tipo_movimento='USCITA_PUB' THEN quantita ELSE -quantita END), 0)
                 FROM tracciamento_fusti;
             """)
             fusti_fuori = c.fetchone()[0] or 0
-    return float(mp[0]), float(mp[1]), float(mp[2]), int(bc[0]), float(bc[1]), int(fusti_fuori)
+    return float(mp[0]), float(mp[1]), float(mp[2]), int(bc[0]), float(bc[1]), float(tot_mosto_lordo), int(fusti_fuori)
 
 @st.cache_data(ttl=30)
 def get_cached_ultimi_costi():
@@ -584,16 +585,27 @@ with col_head1:
     if os.path.exists(LOGO_FILENAME):
         st.image(LOGO_FILENAME, width=85)
 with col_head2:
-    st.title("BrewDesk — Microbrewery Management")
+    st.title("BrewDesk — Microbrewery Management Platform")
 
-malto, luppolo, lievito, tot_confezioni, tot_litri_finiti, tot_fusti_fuori = get_cached_riepilogo()
+malto, luppolo, lievito, tot_confezioni, tot_litri_finiti, tot_mosto_lordo, tot_fusti_fuori = get_cached_riepilogo()
 
-c1, c2, c3, c4, c5 = st.columns(5)
+# --- BLOCCO CONTALITRI & VOLUMI IN PRIMO PIANO ---
+st.markdown("### 🎛️ Contalitri Produzione & Giacenze Volumi")
+cv1, cv2, cv3, cv4 = st.columns(4)
+
+calo_tot_litri = max(0.0, tot_mosto_lordo - tot_litri_finiti)
+perc_resa_vol = (tot_litri_finiti / tot_mosto_lordo * 100.0) if tot_mosto_lordo > 0 else 0.0
+
+cv1.metric("💧 Contalitri Mosto Lordo (Totale Cotte)", f"{tot_mosto_lordo:,.1f} LT", help="Somma totale dei litri usciti dal contalitri della sala cottura e dichiarati in Allegato I")
+cv2.metric("🍺 Birra Effettiva a Magazzino", f"{tot_litri_finiti:,.1f} LT", help="Litri netti realmente confezionati e ancora disponibili nei magazzini")
+cv3.metric("📉 Calo / Scarto Cantina Complessivo", f"{calo_tot_litri:,.1f} LT", delta=f"{perc_resa_vol:.1f}% resa vol.", delta_color="normal")
+cv4.metric("🛢️ Fusti nei Pub (Vuoti da Rendere)", f"{tot_fusti_fuori} fusti", delta=f"{tot_fusti_fuori} fusti fuori" if tot_fusti_fuori > 0 else "Nessun fusto fuori")
+
+st.markdown("##### 🌾 Giacenze Materie Prime")
+c1, c2, c3 = st.columns(3)
 c1.metric("Malto Residuo", f"{malto:.1f} kg")
 c2.metric("Luppolo Residuo", f"{luppolo:.2f} kg")
 c3.metric("Lievito Residuo", f"{lievito:.3f} kg")
-c4.metric("Birra Finita", f"{tot_litri_finiti:.1f} LT")
-c5.metric("🛢️ Fusti nei Pub", f"{tot_fusti_fuori} fusti", delta=f"{tot_fusti_fuori} fuori sede" if tot_fusti_fuori > 0 else "Tutti resi")
 
 st.divider()
 
@@ -615,7 +627,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
 # TAB 1: SALA COTTURA, RICETTE & SANIFICAZIONE CIP INTEGRATA
 # =========================================================================
 with tab1:
-    st.subheader("⚗️️ Sala Cottura: Gestione Ricette, Inserimento Cotta, CIP Sanificazione & Allegato I")
+    st.subheader("⚗️ Sala Cottura: Gestione Ricette, Inserimento Cotta, CIP Sanificazione & Allegato I")
     
     with get_db_connection() as conn:
         df_cotte_all = pd.read_sql_query("SELECT * FROM registro_mosto ORDER BY id DESC;", conn)
@@ -872,13 +884,9 @@ with tab1:
         stringa_aromi_cotta = formatta_spezie_stringa(st.session_state["ingredienti_temp_cotta"])
         json_aromi_cotta = json.dumps(st.session_state["ingredienti_temp_cotta"])
 
-        # =====================================================================
-        # SEZIONE SANIFICAZIONE, LAVAGGIO CIP & ACQUA DELLA COTTA
-        # =====================================================================
+        # SANIFICAZIONE E CIP
         st.write("---")
         st.markdown("#### 🧼 Sanificazione, Lavaggi CIP & Acqua di Processo")
-        st.caption("Traccia l'acqua utilizzata per risciacqui/lavaggi CIP e i prodotti chimici impiegati con calcolo automatico dei decilitri/centilitri e del costo reale per cotta.")
-
         col_w1, col_w2, col_w3 = st.columns(3)
         with col_w1:
             acqua_lavaggio_lt = st.number_input("Acqua Lavaggio / CIP Sala Cottura (Litri)", min_value=0.0, step=50.0, value=val_acqua_lavaggio, key="cot_acqua_lav")
@@ -908,7 +916,6 @@ with tab1:
         with col_san5:
             dose_um = st.selectbox("Unità Misura:", ["cl (centilitri)", "dl (decilitri)", "ml (millilitri)", "lt (litri)"], key="san_dose_um")
 
-        # Conversione in litri per calcolare il costo esatto
         fattore_a_litro = {"cl (centilitri)": 0.01, "dl (decilitri)": 0.10, "ml (millilitri)": 0.001, "lt (litri)": 1.0}[dose_um]
         litri_usati = dose_val * fattore_a_litro
         costo_al_litro_tanica = costo_tanica / formato_tanica_lt if formato_tanica_lt > 0 else 0.0
@@ -931,7 +938,6 @@ with tab1:
 
         costo_totale_sanificanti = 0.0
         if st.session_state["sanificanti_temp_cotta"]:
-            st.markdown("###### 📋 Prodotti di lavaggio e sanificazione applicati:")
             for idx_s, s_item in enumerate(st.session_state["sanificanti_temp_cotta"]):
                 cs1, cs2, cs3, cs4 = st.columns([4, 3, 2, 1])
                 cs1.write(f"🧪 **{s_item['nome']}**")
@@ -941,8 +947,6 @@ with tab1:
                 if cs4.button("🗑️", key=f"del_san_item_{idx_s}"):
                     st.session_state["sanificanti_temp_cotta"].pop(idx_s)
                     st.rerun()
-        else:
-            st.write("Nessun prodotto chimico ancora inserito per questa cotta.")
 
         costo_totale_cip = costo_acqua_tot + costo_totale_sanificanti
         st.info(f"🧼 **Incidenza Totale Lavaggi CIP & Sanificazione per la Cotta:** € {costo_totale_cip:.2f} (Acqua: € {costo_acqua_tot:.2f} + Sanificanti: € {costo_totale_sanificanti:.2f})")
@@ -1438,7 +1442,7 @@ with tab8:
             st.rerun()
 
     st.write("---")
-    st.markdown("### ✍️️ Scarico Vendita Manuale")
+    st.markdown("### ✍️ Scarico Vendita Manuale")
     with st.form("vendita_manuale_form"):
         doc_v = st.text_input("Riferimento DDT / Pub / Cliente")
         fmt_v = st.selectbox("Formato Venduto", ["Fusto 12L", "Fusto 20L", "Fusto 24L", "Fusto 25L", "Fusto 30L", "Bottiglia 0.33L", "Bottiglia 0.75L"])

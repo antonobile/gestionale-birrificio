@@ -1,9 +1,9 @@
 import io
 import re
 import urllib.parse
-from datetime import datetime, timedelta
+from datetime import datetime
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2 import pool
 import xml.etree.ElementTree as ET
 import pandas as pd
 import streamlit as st
@@ -35,12 +35,28 @@ PIVA_AZIENDA = "01822710628"
 CF_AZIENDA = "NBLLGU54L09F636V"
 ALIQUOTA_ACCISA_PLATO = 1.794
 
-# --- FUNZIONE CONNESSIONE DATABASE POSTGRESQL (NEON) ---
-def get_db_connection():
+# --- GESTIONE POOL CONNESSIONI PERSISTENTI (VELOCITÀ MASSIMA) ---
+@st.cache_resource
+def get_db_pool():
     db_url = st.secrets["DATABASE_URL"]
-    return psycopg2.connect(db_url)
+    return pool.SimpleConnectionPool(minconn=1, maxconn=10, dsn=db_url)
 
-# --- SETUP TABELLE (ESECUTO IN AUTOMATICO SU NEON) ---
+class DatabaseConnection:
+    def __enter__(self):
+        self.pool = get_db_pool()
+        self.conn = self.pool.getconn()
+        return self.conn
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is not None:
+            self.conn.rollback()
+        self.pool.putconn(self.conn)
+
+def get_db_connection():
+    return DatabaseConnection()
+
+# --- SETUP TABELLE (ESECUTO UNA SOLA VOLTA ALL'AVVIO) ---
+@st.cache_resource
 def init_db():
     with get_db_connection() as conn:
         with conn.cursor() as c:
@@ -112,7 +128,6 @@ def init_db():
                     note TEXT
                 );
             """)
-            # Auto-migrazione colonne se mancanti
             colonne_nuove_mosto = [
                 ("contalitri_inizio", "NUMERIC DEFAULT 0"),
                 ("contalitri_fine", "NUMERIC DEFAULT 0"),
@@ -132,10 +147,11 @@ def init_db():
                 c.execute(f"ALTER TABLE birra_condizionata ADD COLUMN IF NOT EXISTS {col} {tipo};")
 
         conn.commit()
+    return True
 
 init_db()
 
-# --- FUNZIONI PARSING XML ---
+# --- FUNZIONI DI UTILITÀ XML & FORMULE ---
 def trova_testo_nodo(elemento, tags):
     if elemento is None:
         return ""
@@ -305,7 +321,7 @@ END:VCALENDAR"""
 
 st.title("🍺 Gestionale Birrificio Nobile & Registri Fiscali")
 
-# --- QUERY DI RIEPILOGO ---
+# --- QUERY DI RIEPILOGO TESTATA ---
 with get_db_connection() as conn:
     with conn.cursor() as c:
         c.execute("""
@@ -340,7 +356,7 @@ st.divider()
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📥 Carico Acquisti XML",
-    "🏷️ Imballaggi",
+    "🏷️️ Imballaggi",
     "⚗️ Cotta & Sala Cottura",
     "📦 Confezionamento",
     "🚚 Vendite (XML & Manuale)",
@@ -349,7 +365,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📑 Report 31/12 Commercialista",
 ])
 
-# TAB 1: CARICO ACQUISTI FORNITORI XML
+# TAB 1: CARICO ACQUISTI XML
 with tab1:
     st.subheader("Carico Automatico Materie Prime da Fatture XML Fornitori")
     st.write("Trascina qui le fatture XML ricevute dai fornitori di malto, luppolo e lievito.")
@@ -421,9 +437,9 @@ with tab1:
                         tot_m += t_m
                         tot_l += t_l
                         tot_y += t_y
-                        conn.commit()
                     except Exception as e:
                         st.error(f"Errore su {up_xml.name}: {e}")
+                conn.commit()
 
         st.success(f"Caricate {carichi_mp} fatture: +{tot_m:.1f} kg Malto, +{tot_l:.2f} kg Luppolo, +{tot_y:.2f} kg Lievito.")
         st.rerun()
@@ -486,7 +502,7 @@ with tab2:
         )
         st.dataframe(df_imb, use_container_width=True)
 
-# TAB 3: COTTA & SALA COTTURA (CON SELEZIONE E MODIFICA LOTTO ESISTENTE)
+# TAB 3: COTTA & SALA COTTURA (CON MODIFICA LOTTI ESISTENTI)
 with tab3:
     st.subheader("⚗️ Sala Cottura: Inserimento & Modifica Lotti Cotte")
     
@@ -495,7 +511,6 @@ with tab3:
 
     modalita_cotta = st.radio("Azione:", ["➕ Registra Nuova Cotta", "✏️ Modifica Cotta / Lotto Esistente"], horizontal=True)
 
-    # Valori di default
     val_data = datetime.now().date()
     val_c_num = "C26-01"
     val_lotto = f"LOTTO-{datetime.now().strftime('%y%m%d')}"
@@ -531,7 +546,7 @@ with tab3:
             val_luppolo = float(r_sel.get("luppolo_usato_kg", 1.00) or 1.00)
             val_lievito_kg = float(r_sel.get("lievito_usato_kg", 0.0) or 0.0)
         else:
-            st.info("Nessuna cotta attualmente presente nel database da modificare.")
+            st.info("Nessuna cotta presente da modificare.")
 
     col_d1, col_d2, col_d3 = st.columns(3)
     with col_d1:
@@ -777,10 +792,9 @@ with tab5:
                                         "Quantità (pz)": qta,
                                         "Litri Scaricati": litri_riga,
                                     })
-
-                        conn.commit()
                     except Exception as e:
                         st.error(f"Errore su {up_xml.name}: {e}")
+                conn.commit()
 
         if righe_elaborate:
             st.success(f"Registrati con successo {tot_scarichi} scarichi per complessivi {tot_litri:.1f} Litri venduti!")
@@ -815,10 +829,10 @@ with tab5:
             st.success("Scarico vendita registrato!")
             st.rerun()
 
-# TAB 6: REGISTRI E MAGAZZINO (GIACENZE COMPLETE E AUTO-CARICATE)
+# TAB 6: GIACENZE MAGAZZINO COMPLETE
 with tab6:
     st.subheader("🏛️ Giacenze Magazzino Birra Pronta & Prodotti Finiti")
-    st.write("Le giacenze seguenti includono sia i prodotti caricati dalle cotte/confezionamenti che gli scarichi dalle vendite XML.")
+    st.write("Consistenze aggiornate in tempo reale da cotte, confezionamenti e scarichi XML.")
 
     with get_db_connection() as conn:
         df_pf = pd.read_sql_query(
@@ -865,7 +879,7 @@ with tab6:
 # TAB 7: SCADENZE ACCISE & CALENDARIO
 with tab7:
     st.subheader("⏰ Gestione Scadenze Accise & Promemoria Calendario")
-    st.write("Registra qui la scadenza del pagamento accise mensile (solitamente il 16 del mese successivo) per generare i promemoria con avviso acustico su tutti i dispositivi.")
+    st.write("Registra qui la scadenza del pagamento accise mensile (solitamente il 16 del mese successivo) per generare promemoria sincronizzabili.")
 
     col_acc1, col_acc2 = st.columns(2)
     with col_acc1:

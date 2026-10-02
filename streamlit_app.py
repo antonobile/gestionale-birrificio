@@ -164,22 +164,49 @@ def trova_testo_nodo(elemento, tags):
 
 def estrai_da_descrizione(desc: str, qta_pz: float):
     d = desc.upper()
-    kg = 0.0
-    m_kg = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:KG|CHILI)", d)
-    m_g = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:G|GR|GRAMMI)", d)
-    if m_kg:
-        kg = float(m_kg.group(1).replace(",", ".")) * qta_pz
-    elif m_g:
-        kg = (float(m_g.group(1).replace(",", ".")) / 1000.0) * qta_pz
-    else:
-        kg = qta_pz
+    kg_singolo = 0.0
 
-    if any(k in d for k in ["MALTO", "PILSNER", "WEYERMANN", "FRUMENTO", "ZUCCHERO", "PALE", "CARA"]):
-        return ("MALTO", kg)
-    if any(k in d for k in ["LUPPOLO", "T90", "MAGNUM", "PERLE", "MOSAIC", "CASCADE", "CITRA", "SAAZ"]):
-        return ("LUPPOLO", kg)
-    if "LIEVITO" in d or "FERMENTO" in d or "YEAST" in d:
-        return ("LIEVITO", kg)
+    # Rilevamento pesi es. 11.5 GR, 11,5 GR, 500 G, 25 KG
+    m_kg = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:KG|CHILI)", d)
+    m_g = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:G|GR|GRAMMI)\b", d)
+
+    if m_kg:
+        kg_singolo = float(m_kg.group(1).replace(",", "."))
+        kg_tot = kg_singolo * qta_pz
+    elif m_g:
+        kg_singolo = float(m_g.group(1).replace(",", ".")) / 1000.0
+        kg_tot = kg_singolo * qta_pz
+    else:
+        kg_tot = qta_pz
+
+    # 1. LIEVITI (Fermentis, Safbrew, Safebrew, Lallemand, WB-06, BE-256, S-04, ecc.)
+    chiavi_lievito = [
+        "LIEVITO", "YEAST", "FERMENTO", "FERMENTIS", "SAFEBREW", "SAFBREW", 
+        "SAFALE", "SAFLAGER", "LALLEMAND", "BE-256", "BE256", "WB-06", "WB06", 
+        "S-04", "S04", "US-05", "US05", "T-58", "T58", "W-34/70", "M36"
+    ]
+    if any(k in d for k in chiavi_lievito):
+        return ("LIEVITO", kg_tot)
+
+    # 2. MALTIE FERMENTABILI (incluso Zucchero Candito, Sugar Candy, Destrosio)
+    chiavi_malto_fermentabili = [
+        "MALTO", "PILSNER", "WEYERMANN", "FRUMENTO", "PALE", "CARA", "CRYSTAL", 
+        "MONICH", "MUNICH", "ROASTED", "CHOCOLATE", "ORZO", "SPELT",
+        "ZUCCHERO CANDITO", "SUGAR CANDY", "CANDI SUGAR", "ZUCCHERO BRUNO", 
+        "ZUCCHERO BIANCO", "DESTROSIO", "ZUCCHERO"
+    ]
+    if any(k in d for k in chiavi_malto_fermentabili):
+        return ("MALTO", kg_tot)
+
+    # 3. LUPPOLI
+    chiavi_luppolo = [
+        "LUPPOLO", "HOP", "T90", "T-90", "PELLETS", "MAGNUM", "PERLE", 
+        "MOSAIC", "CASCADE", "CITRA", "SAAZ", "STYRIAN", "GOLDING", 
+        "CENTENNIAL", "AMARILLO", "CHINOOK", "FUGGLE"
+    ]
+    if any(k in d for k in chiavi_luppolo):
+        return ("LUPPOLO", kg_tot)
+
     return ("ALTRO", 0.0)
 
 def estrai_birra_da_vendita(desc: str):
@@ -242,7 +269,7 @@ def genera_pdf_commercialista(val_mp, val_imb, val_pf, tot_bilancio, malto, lupp
 
     pdf.set_font("Helvetica", "", 9)
     pdf.set_x(15)
-    pdf.cell(267, 5, f"Consistenze: Malto amidaceo ({malto:.1f} kg), Luppoli ({luppolo:.2f} kg), Lieviti ({lievito:.2f} kg) - Valutate al costo effettivo escluso IVA.", ln=1)
+    pdf.cell(267, 5, f"Consistenze: Malto e fermentabili ({malto:.1f} kg), Luppoli ({luppolo:.2f} kg), Lieviti ({lievito:.3f} kg) - Valutate al costo effettivo escluso IVA.", ln=1)
 
     pdf.set_font("Helvetica", "B", 9)
     pdf.set_x(15)
@@ -347,9 +374,9 @@ with get_db_connection() as conn:
         tot_litri_finiti = float(df_finiti[1])
 
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Malto Residuo", f"{malto:.1f} kg")
+col1.metric("Malto & Zuccheri Residui", f"{malto:.1f} kg")
 col2.metric("Luppolo Residuo", f"{luppolo:.2f} kg")
-col3.metric("Lievito Residuo", f"{lievito:.2f} kg")
+col3.metric("Lievito Residuo", f"{lievito:.3f} kg")
 col4.metric("Birra a Magazzino", f"{tot_litri_finiti:.1f} LT")
 
 st.divider()
@@ -365,10 +392,10 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📑 Report 31/12 Commercialista",
 ])
 
-# TAB 1: CARICO ACQUISTI XML CON RICONOSCIMENTO DUPLICATI
+# TAB 1: CARICO ACQUISTI XML CON RICONOSCIMENTO LIEVITI E ZUCCHERI
 with tab1:
     st.subheader("Carico Automatico Materie Prime da Fatture XML Fornitori")
-    st.write("Trascina qui le fatture XML ricevute dai fornitori di malto, luppolo e lievito.")
+    st.write("Riconosce in automatico malti, luppoli, lieviti (anche Fermentis, Safbrew da 11.5g) e zuccheri canditi.")
 
     up_xmls = st.file_uploader(
         "Seleziona i file XML fornitori",
@@ -411,7 +438,6 @@ with tab1:
                         data_doc = trova_testo_nodo(root, ["Data"]) or pd.Timestamp.now().strftime("%Y-%m-%d")
                         rif_fattura = f"Fatt. {num_doc}"
 
-                        # CONTROLLO DUPLICATO: Verifica se il documento esiste già
                         c.execute("SELECT id FROM materie_prime WHERE riferimento=%s AND azienda=%s LIMIT 1;", (rif_fattura, mittente))
                         esiste = c.fetchone()
                         if esiste:
@@ -450,20 +476,20 @@ with tab1:
                 conn.commit()
 
         if carichi_mp > 0:
-            st.success(f"Caricate {carichi_mp} nuove fatture: +{tot_m:.1f} kg Malto, +{tot_l:.2f} kg Luppolo, +{tot_y:.2f} kg Lievito.")
+            st.success(f"Caricate {carichi_mp} nuove fatture: +{tot_m:.1f} kg Malto/Zuccheri, +{tot_l:.2f} kg Luppolo, +{tot_y:.3f} kg Lievito.")
             st.rerun()
 
     st.write("---")
     st.markdown("#### 📋 Storico Movimentazioni Materie Prime & Correzione Doppioni")
     with get_db_connection() as conn:
-        df_mp_mov = pd.read_sql_query("SELECT id, data as \"Data\", tipo as \"Tipo Movimento\", riferimento as \"Riferimento\", azienda as \"Azienda / Cotta\", malto_kg as \"Kg Malto\", luppolo_kg as \"Kg Luppolo\", lievito_kg as \"Kg Lievito\" FROM materie_prime ORDER BY id DESC;", conn)
+        df_mp_mov = pd.read_sql_query("SELECT id, data as \"Data\", tipo as \"Tipo Movimento\", riferimento as \"Riferimento\", azienda as \"Azienda / Cotta\", malto_kg as \"Kg Malto/Zucchero\", luppolo_kg as \"Kg Luppolo\", lievito_kg as \"Kg Lievito\" FROM materie_prime ORDER BY id DESC;", conn)
     st.dataframe(df_mp_mov, use_container_width=True)
 
     if not df_mp_mov.empty:
         col_m_del1, col_m_del2 = st.columns([3, 1])
         with col_m_del1:
-            opzioni_mp_del = [f"ID {r['id']} | {r['Data']} - {r['Tipo Movimento']} - {r['Azienda / Cotta']} (Malto: {r['Kg Malto']} kg, Luppolo: {r['Kg Luppolo']} kg)" for _, r in df_mp_mov.iterrows()]
-            sel_mp = st.selectbox("Seleziona il movimento materie prime da eliminare (es. cotta registrata due volte):", opzioni_mp_del)
+            opzioni_mp_del = [f"ID {r['id']} | {r['Data']} - {r['Tipo Movimento']} - {r['Azienda / Cotta']} (Malto/Zucchero: {r['Kg Malto/Zucchero']} kg, Luppolo: {r['Kg Luppolo']} kg, Lievito: {r['Kg Lievito']} kg)" for _, r in df_mp_mov.iterrows()]
+            sel_mp = st.selectbox("Seleziona il movimento materie prime da eliminare:", opzioni_mp_del)
             id_mp_da_cancellare = int(sel_mp.split("|")[0].replace("ID", "").strip())
         with col_m_del2:
             st.write("")
@@ -534,7 +560,7 @@ with tab2:
         )
         st.dataframe(df_imb, use_container_width=True)
 
-# TAB 3: COTTA & SALA COTTURA (CON GESTIONE COMPLETA)
+# TAB 3: COTTA & SALA COTTURA (CON UNITÀ IN GRAMMI E KG PER TUTTO)
 with tab3:
     st.subheader("⚗️ Sala Cottura: Inserimento & Gestione Lotti Cotte")
     
@@ -569,7 +595,7 @@ with tab3:
         val_litri = 500.0
         val_plato = 12.0
         val_malto = 100.0
-        val_luppolo = 1.00
+        val_luppolo_kg = 1.00
         val_lievito_kg = 0.0
         id_cotta_modifica = None
 
@@ -592,7 +618,7 @@ with tab3:
                 val_litri = float(r_sel["litri_mosto"])
                 val_plato = float(r_sel["grado_plato"])
                 val_malto = float(r_sel.get("malto_usato_kg", 100.0) or 100.0)
-                val_luppolo = float(r_sel.get("luppolo_usato_kg", 1.00) or 1.00)
+                val_luppolo_kg = float(r_sel.get("luppolo_usato_kg", 1.00) or 1.00)
                 val_lievito_kg = float(r_sel.get("lievito_usato_kg", 0.0) or 0.0)
             else:
                 st.info("Nessuna cotta presente da modificare.")
@@ -622,11 +648,20 @@ with tab3:
         plato = st.number_input("Grado Plato Rilevato (°P)", min_value=0.0, step=0.1, value=val_plato)
 
         st.write("---")
-        st.markdown("#### 🌾 Materie Prime Impiegate & Calcolo Resa")
+        st.markdown("#### 🌾 Materie Prime Impiegate & Scelta Unità (g / kg)")
         col_m1, col_m2 = st.columns(2)
         with col_m1:
-            m_usato = st.number_input("Kg Malto Macinato", min_value=0.0, step=5.0, value=val_malto)
-            l_usato = st.number_input("Kg Luppolo Impiegato", min_value=0.0, step=0.05, value=val_luppolo)
+            m_usato = st.number_input("Kg Malto & Zuccheri Macinati/Usati (kg)", min_value=0.0, step=1.0, value=val_malto)
+            
+            # Scelta unità luppolo
+            u_lup = st.selectbox("Unità Misura Luppolo:", ["Grammi (g)", "Chilogrammi (kg)"], index=0)
+            if u_lup == "Grammi (g)":
+                val_lup_g = val_luppolo_kg * 1000.0 if val_luppolo_kg > 0 else 1000.0
+                l_input = st.number_input("Quantità Luppolo (Grammi)", min_value=0.0, step=10.0, value=val_lup_g)
+                l_usato = l_input / 1000.0
+            else:
+                l_input = st.number_input("Quantità Luppolo (Kg)", min_value=0.0, step=0.05, value=val_luppolo_kg)
+                l_usato = l_input
 
             sg = 1 + (plato / (258.6 - ((plato / 258.2) * 227.1)))
             estratto_kg = (litri_mosto_reali * plato * sg) / 100.0 if litri_mosto_reali > 0 else 0
@@ -640,12 +675,13 @@ with tab3:
                 index=0 if val_lievito_kg == 0.0 else 1
             )
             if "Nuova confezione" in tipo_lievito:
-                u_lievito = st.selectbox("Unità di Misura Lievito:", ["Chilogrammi (kg)", "Grammi (g)"])
+                u_lievito = st.selectbox("Unità Misura Lievito:", ["Grammi (g)", "Chilogrammi (kg)"], index=0)
                 if u_lievito == "Grammi (g)":
-                    y_input = st.number_input("Quantità Lievito (Grammi)", min_value=0.0, step=50.0, value=(val_lievito_kg * 1000.0 if val_lievito_kg > 0 else 500.0))
+                    val_y_g = val_lievito_kg * 1000.0 if val_lievito_kg > 0 else 11.5
+                    y_input = st.number_input("Quantità Lievito (Grammi)", min_value=0.0, step=0.5, value=val_y_g)
                     y_kg = y_input / 1000.0
                 else:
-                    y_input = st.number_input("Quantità Lievito (Kg)", min_value=0.0, step=0.1, value=(val_lievito_kg if val_lievito_kg > 0 else 0.5))
+                    y_input = st.number_input("Quantità Lievito (Kg)", min_value=0.0, step=0.01, value=(val_lievito_kg if val_lievito_kg > 0 else 0.0115))
                     y_kg = y_input
                 nota_lievito = f"Nuovo ({y_input} {u_lievito})"
             else:
@@ -684,11 +720,11 @@ with tab3:
                             """,
                             (data_cotta_sel.strftime("%Y-%m-%d"), f"Cotta {c_num} - {lotto_sfuso}", m_usato, l_usato, y_kg),
                         )
-                        st.success(f"Nuova cotta registrata! Resa: {resa_perc:.1f}% - Scaricati {m_usato:.1f} kg malto.")
+                        st.success(f"Nuova cotta registrata! Resa: {resa_perc:.1f}% - Scaricati {m_usato:.1f} kg malto/zuccheri, {l_usato:.3f} kg luppolo, {y_kg:.3f} kg lievito.")
                 conn.commit()
             st.rerun()
 
-# TAB 4: CONFEZIONAMENTO (CON MODIFICA MANUALE LITRI EFFETTIVI E SCARTO)
+# TAB 4: CONFEZIONAMENTO
 with tab4:
     st.subheader("📦 Confezionamento Birra & Carico Prodotti Finiti")
     
@@ -827,7 +863,6 @@ with tab5:
                         data_doc = trova_testo_nodo(root, ["Data"]) or pd.Timestamp.now().strftime("%Y-%m-%d")
                         rif_vendita = f"Fatt. {num_doc} - {cliente}"
 
-                        # CONTROLLO DUPLICATO VENDITE: Verifica se il documento è già stato elaborato
                         c.execute("SELECT id FROM birra_condizionata WHERE documento_rif=%s LIMIT 1;", (rif_vendita,))
                         if c.fetchone():
                             st.warning(f"⚠️ Fattura di Vendita XML N. {num_doc} ({cliente}) già caricata! File ignorato per evitare scarichi doppi.")
@@ -901,7 +936,7 @@ with tab5:
 
 # TAB 6: GIACENZE MAGAZZINO & ELIMINAZIONE MOVIMENTI
 with tab6:
-    st.subheader("🏛️️ Giacenze Magazzino Birra Pronta & Prodotti Finiti")
+    st.subheader("🏛️ Giacenze Magazzino Birra Pronta & Prodotti Finiti")
     st.write("Consistenze aggiornate in tempo reale da cotte, confezionamenti e scarichi XML.")
 
     with get_db_connection() as conn:
@@ -1055,9 +1090,9 @@ with tab8:
 
     st.markdown("### 🌾 1. Materie Prime in Giacenza")
     df_mp_anteprima = pd.DataFrame([
-        {"Articolo": "Malto Amidaceo", "Giacenza Fisica (kg)": f"{malto:.2f}", "Costo Unitario (€/kg)": f"{costo_kg_m:.2f}", "Valore Totale (€)": round(val_m, 2)},
+        {"Articolo": "Malto & Fermentabili", "Giacenza Fisica (kg)": f"{malto:.2f}", "Costo Unitario (€/kg)": f"{costo_kg_m:.2f}", "Valore Totale (€)": round(val_m, 2)},
         {"Articolo": "Luppoli", "Giacenza Fisica (kg)": f"{luppolo:.2f}", "Costo Unitario (€/kg)": f"{costo_kg_l:.2f}", "Valore Totale (€)": round(val_l, 2)},
-        {"Articolo": "Lieviti", "Giacenza Fisica (kg)": f"{lievito:.2f}", "Costo Unitario (€/kg)": f"{costo_kg_y:.2f}", "Valore Totale (€)": round(val_y, 2)},
+        {"Articolo": "Lieviti", "Giacenza Fisica (kg)": f"{lievito:.3f}", "Costo Unitario (€/kg)": f"{costo_kg_y:.2f}", "Valore Totale (€)": round(val_y, 2)},
     ])
     st.dataframe(df_mp_anteprima, use_container_width=True)
     st.info(f"**Subtotale Materie Prime: € {valore_tot_mp:,.2f}**")
@@ -1104,7 +1139,7 @@ with tab8:
     st.divider()
     st.markdown(f"""
         ### 💰 **TOTALE RIMANENZE FINALI AL 31/12: € {totale_bilancio_complessivo:,.2f}**
-        * **Materie Prime:** € {valore_tot_mp:,.2f}
+        * **Materie Prime & Zuccheri:** € {valore_tot_mp:,.2f}
         * **Imballaggi:** € {valore_tot_imb:,.2f}
         * **Prodotti Finiti:** € {valore_tot_pf:,.2f}
     """)

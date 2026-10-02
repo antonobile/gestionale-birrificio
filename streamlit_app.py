@@ -9,26 +9,21 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 import streamlit as st
 from fpdf import FPDF
+from PIL import Image
 
 # --- CONFIGURAZIONE BRANDING BREWDESK & LOGO ---
-URL_LOGO_GITHUB = "https://raw.githubusercontent.com/antonobile/gestionale-birrificio/main/logo.png"
-LOGO_IMG = "logo.png" if os.path.exists("logo.png") else URL_LOGO_GITHUB
+LOGO_FILENAME = "brewdesk-icon-concept-1.png"
+
+# Caricamento icona browser
+if os.path.exists(LOGO_FILENAME):
+    icona_finestra = Image.open(LOGO_FILENAME)
+else:
+    icona_finestra = "🍺"
 
 st.set_page_config(
     page_title="BrewDesk - Brewery Management Platform",
-    page_icon=LOGO_IMG,
+    page_icon=icona_finestra,
     layout="wide"
-)
-
-# Tag PWA e Favicon per browser e installazione Desktop
-st.markdown(
-    f"""
-    <head>
-        <link rel="icon" type="image/png" href="{URL_LOGO_GITHUB}">
-        <link rel="apple-touch-icon" href="{URL_LOGO_GITHUB}">
-    </head>
-    """,
-    unsafe_allow_html=True,
 )
 
 # --- PROTEZIONE ACCESSO CON CREDENZIALI ---
@@ -44,10 +39,8 @@ if "autenticato" not in st.session_state:
 if not st.session_state["autenticato"]:
     col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
     with col_l2:
-        try:
-            st.image(LOGO_IMG, width=120)
-        except Exception:
-            pass
+        if os.path.exists(LOGO_FILENAME):
+            st.image(LOGO_FILENAME, width=130)
         st.title("🔒 BrewDesk - Accesso Piattaforma")
         with st.form("login_form"):
             username_inserito = st.text_input("Nome Utente / Username")
@@ -63,10 +56,8 @@ if not st.session_state["autenticato"]:
     st.stop()
 
 # --- BARRA LATERALE CON BRANDING BREWDESK ---
-try:
-    st.sidebar.image(LOGO_IMG, width=150)
-except Exception:
-    pass
+if os.path.exists(LOGO_FILENAME):
+    st.sidebar.image(LOGO_FILENAME, width=150)
 st.sidebar.markdown("### **BrewDesk**")
 st.sidebar.caption("Brewery SaaS Management System")
 st.sidebar.markdown(f"👤 **Operatore:** `{st.session_state['utente_connesso']}`")
@@ -430,13 +421,11 @@ def genera_pdf_commercialista(val_mp, val_imb, val_pf, tot_bilancio, malto, lupp
 
     return bytes(pdf.output())
 
-# --- HEADER PRINCIPALE DELL'APP ---
+# --- HEADER PRINCIPALE DELL'APP CON LOGO ---
 col_head1, col_head2 = st.columns([1.2, 8])
 with col_head1:
-    try:
-        st.image(LOGO_IMG, width=90)
-    except Exception:
-        pass
+    if os.path.exists(LOGO_FILENAME):
+        st.image(LOGO_FILENAME, width=85)
 with col_head2:
     st.title("BrewDesk — Microbrewery Management")
 
@@ -586,7 +575,7 @@ with tab1:
         with col_m_del2:
             st.write("")
             st.write("")
-            if st.button("🗑️ Elimina Movimento MP", type="primary"):
+            if st.button("🗑️️ Elimina Movimento MP", type="primary"):
                 with get_db_connection() as conn:
                     with conn.cursor() as c:
                         c.execute("DELETE FROM materie_prime WHERE id=%s;", (id_mp_da_cancellare,))
@@ -663,10 +652,10 @@ with tab3:
 
     c_m_default, c_l_default, c_y_default = get_cached_ultimi_costi()
 
-    modalita_cotta = st.radio("Azione:", ["➕ Registra Nuova Cotta", "✏️ Modifica Cotta Esistente", "🗑️ Elimina Cotta Errata"], horizontal=True)
+    modalita_cotta = st.radio("Azione:", ["➕ Registra Nuova Cotta", "✏️️ Modifica Cotta Esistente", "🗑️ Elimina Cotta Errata"], horizontal=True)
 
     if modalita_cotta == "🗑️ Elimina Cotta Errata":
-        st.warning("⚠️ L'eliminazione rimuoverà la cotta selezionata dal registro.")
+        st.warning("⚠️️ L'eliminazione rimuoverà la cotta selezionata dal registro.")
         if not df_cotte_all.empty:
             scelte_cotte_del = [f"ID {r['id']} | Cotta {r['cotta_num']} - Lotto {r['lotto_sfuso']} ({r['tipo_birra']}) - {r['data']}" for _, r in df_cotte_all.iterrows()]
             sel_del = st.selectbox("Seleziona la cotta da eliminare:", scelte_cotte_del)
@@ -1084,7 +1073,7 @@ with tab5:
 
 # TAB 6: GIACENZE MAGAZZINO & ELIMINAZIONE MOVIMENTI
 with tab6:
-    st.subheader("🏛️️ Giacenze Magazzino Birra Pronta & Prodotti Finiti")
+    st.subheader("🏛 Giacenze Magazzino Birra Pronta & Prodotti Finiti")
     st.write("Consistenze aggiornate in tempo reale da cotte, confezionamenti e scarichi XML.")
 
     with get_db_connection() as conn:
@@ -1209,7 +1198,7 @@ with tab7:
                 
                 with st.expander(f"📌 Tributo {cod_trib} ({desc_trib}) - {scad_date.strftime('%d/%m/%Y')} - € {r['importo_dovuto']:.2f}"):
                     if 0 <= giorni_rimasti <= 3:
-                        st.error(f"⚠️ SCADENZA IMMINENTE: Mancano solo {giorni_rimasti} giorni!")
+                        st.error(f"⚠️️ SCADENZA IMMINENTE: Mancano solo {giorni_rimasti} giorni!")
                         st.markdown("""
                             <audio autoplay>
                                 <source src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" type="audio/mpeg">

@@ -1,4 +1,5 @@
 import io
+import os
 import re
 import urllib.parse
 from datetime import datetime
@@ -8,9 +9,27 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 import streamlit as st
 from fpdf import FPDF
+from PIL import Image
+
+# --- CONFIGURAZIONE BRANDING BREWDESK ---
+LOGO_PATH = "logo.png"
+icona_app = Image.open(LOGO_PATH) if os.path.exists(LOGO_PATH) else "🍺"
 
 st.set_page_config(
-    page_title="Gestionale Birrificio Nobile", page_icon="🍺", layout="wide"
+    page_title="BrewDesk - Brewery Management Platform",
+    page_icon=icona_app,
+    layout="wide"
+)
+
+# Tag PWA e Favicon per browser e desktop
+st.markdown(
+    """
+    <head>
+        <link rel="icon" type="image/png" href="logo.png">
+        <link rel="apple-touch-icon" href="logo.png">
+    </head>
+    """,
+    unsafe_allow_html=True,
 )
 
 # --- PROTEZIONE ACCESSO CON CREDENZIALI ---
@@ -24,22 +43,30 @@ if "autenticato" not in st.session_state:
     st.session_state["utente_connesso"] = ""
 
 if not st.session_state["autenticato"]:
-    st.title("🔒 Accesso Riservato Birrificio Nobile")
-    with st.form("login_form"):
-        username_inserito = st.text_input("Nome Utente / Username")
-        pwd_inserita = st.text_input("Password di Accesso", type="password")
-        btn_login = st.form_submit_button("Accedi al Gestionale")
-        if btn_login:
-            if username_inserito in UTENTI_VALIDI and UTENTI_VALIDI[username_inserito] == pwd_inserita:
-                st.session_state["autenticato"] = True
-                st.session_state["utente_connesso"] = username_inserito
-                st.rerun()
-            else:
-                st.error("Credenziali non valide. Verifica Nome Utente e Password.")
+    col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
+    with col_l2:
+        if os.path.exists(LOGO_PATH):
+            st.image(LOGO_PATH, width=120)
+        st.title("🔒 BrewDesk - Accesso Piattaforma")
+        with st.form("login_form"):
+            username_inserito = st.text_input("Nome Utente / Username")
+            pwd_inserita = st.text_input("Password di Accesso", type="password")
+            btn_login = st.form_submit_button("Accedi al Gestionale")
+            if btn_login:
+                if username_inserito in UTENTI_VALIDI and UTENTI_VALIDI[username_inserito] == pwd_inserita:
+                    st.session_state["autenticato"] = True
+                    st.session_state["utente_connesso"] = username_inserito
+                    st.rerun()
+                else:
+                    st.error("Credenziali non valide. Verifica Nome Utente e Password.")
     st.stop()
 
-# Barra laterale
-st.sidebar.markdown(f"👤 **Utente:** `{st.session_state['utente_connesso']}`")
+# --- BARRA LATERALE CON BRANDING BREWDESK ---
+if os.path.exists(LOGO_PATH):
+    st.sidebar.image(LOGO_PATH, width=150)
+st.sidebar.markdown("### **BrewDesk**")
+st.sidebar.caption("Brewery SaaS Management System")
+st.sidebar.markdown(f"👤 **Operatore:** `{st.session_state['utente_connesso']}`")
 if st.sidebar.button("Disconnetti (Logout)"):
     st.session_state["autenticato"] = False
     st.session_state["utente_connesso"] = ""
@@ -295,7 +322,7 @@ def genera_file_ics(titolo, descrizione, data_scadenza):
     dt_str = data_scadenza.strftime("%Y%m%d")
     ics_content = f"""BEGIN:VCALENDAR
 VERSION:2.0
-PRODID:-//Birrificio Nobile//Gestionale Birra//IT
+PRODID:-//BrewDesk//Brewery Management//IT
 CALSCALE:GREGORIAN
 BEGIN:VEVENT
 SUMMARY:{titolo}
@@ -323,7 +350,7 @@ def genera_pdf_commercialista(val_mp, val_imb, val_pf, tot_bilancio, malto, lupp
 
     pdf.set_font("Helvetica", "I", 9)
     pdf.set_x(15)
-    pdf.cell(267, 5, "Chiusura Esercizio Fiscale - Rilevazione Consistenze e Valutazioni", align="C", ln=1)
+    pdf.cell(267, 5, "BrewDesk Platform - Rilevazione Consistenze e Valutazioni Fiscali", align="C", ln=1)
     pdf.ln(2)
 
     pdf.set_font("Helvetica", "B", 9)
@@ -400,8 +427,13 @@ def genera_pdf_commercialista(val_mp, val_imb, val_pf, tot_bilancio, malto, lupp
 
     return bytes(pdf.output())
 
-# --- INTESTAZIONE APP ---
-st.title("🍺 Gestionale Birrificio Nobile & Registri Fiscali")
+# --- HEADER PRINCIPALE DELL'APP ---
+col_head1, col_head2 = st.columns([1, 8])
+with col_head1:
+    if os.path.exists(LOGO_PATH):
+        st.image(LOGO_PATH, width=80)
+with col_head2:
+    st.title("BrewDesk — Microbrewery Management")
 
 malto, luppolo, lievito, tot_confezioni, tot_litri_finiti = get_cached_riepilogo()
 
@@ -806,7 +838,7 @@ with tab3:
             st.cache_data.clear()
             st.rerun()
 
-# TAB 4: CONFEZIONAMENTO MISTO (FUSTI + BOTTIGLIE NELLA STESSA COTTA)
+# TAB 4: CONFEZIONAMENTO MISTO
 with tab4:
     st.subheader("📦 Confezionamento Misto Cotta (Fusti e Bottiglie Simultanei)")
     st.write("Puoi confezionare una cotta suddividendola tra più formati (fusti e bottiglie insieme). Inserisci le quantità utilizzate:")
@@ -857,7 +889,6 @@ with tab4:
         with cb2:
             q_b75 = st.number_input("N° Bottiglie 0.75L (pezzi singoli)", min_value=0, step=6, value=0)
 
-        # Calcolo volumetrico complessivo
         litri_fusti = (q_f20 * 20.0) + (q_f24 * 24.0) + (q_f25 * 25.0) + (q_f30 * 30.0)
         litri_bottiglie = (q_b33 * 0.33) + (q_b75 * 0.75)
         litri_totali_calcolati = litri_fusti + litri_bottiglie
@@ -893,8 +924,6 @@ with tab4:
                 st.error("Inserisci almeno una quantità maggiore di zero per fusti o bottiglie.")
             else:
                 data_imb_str = data_imbottigliamento.strftime("%Y-%m-%d")
-                
-                # Proporzione per registrare le righe dei singoli formati a magazzino
                 fattore_correzione = (litri_effettivi / litri_totali_calcolati) if litri_totali_calcolati > 0 else 1.0
 
                 movimenti_da_creare = []
@@ -908,7 +937,6 @@ with tab4:
                 with get_db_connection() as conn:
                     with conn.cursor() as c:
                         for i, (fmt, qta, lt_riga, art_imb) in enumerate(movimenti_da_creare):
-                            # Assegna lo scarto sulla prima riga per evitare duplicazioni di scarto
                             scarto_riga = scarto_reale if i == 0 else 0.0
                             etto_riga = (lt_riga * plato_riferimento) / 100.0
 
@@ -920,7 +948,6 @@ with tab4:
                                 (data_imb_str, lotto_c, fmt, qta, lt_riga, plato_riferimento, etto_riga, scarto_riga, costo_prod_lt),
                             )
 
-                            # Scarico imballaggi corrispondenti
                             c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', %s, %s, %s, %s);", (data_imb_str, f"Lotto {lotto_c}", art_imb, qta))
                             if "Bottiglia" in fmt:
                                 c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', %s, %s, 'Tappi a corona', %s);", (data_imb_str, f"Lotto {lotto_c}", qta))
@@ -928,7 +955,7 @@ with tab4:
 
                     conn.commit()
                 st.cache_data.clear()
-                st.success(f"Confezionamento misto registrato! Caricati {litri_effettivi:.1f} LT complessivi suddivisi tra i formati scelti con scarto di {scarto_reale:.1f} LT.")
+                st.success(f"Confezionamento misto registrato! Caricati {litri_effettivi:.1f} LT complessivi con scarto di {scarto_reale:.1f} LT.")
                 st.rerun()
 
 # TAB 5: VENDITE (XML & MANUALE)
@@ -1052,7 +1079,7 @@ with tab5:
 
 # TAB 6: GIACENZE MAGAZZINO & ELIMINAZIONE MOVIMENTI
 with tab6:
-    st.subheader("🏛️️ Giacenze Magazzino Birra Pronta & Prodotti Finiti")
+    st.subheader("🏛️ Giacenze Magazzino Birra Pronta & Prodotti Finiti")
     st.write("Consistenze aggiornate in tempo reale da cotte, confezionamenti e scarichi XML.")
 
     with get_db_connection() as conn:
@@ -1093,7 +1120,7 @@ with tab6:
         )
         st.dataframe(df_dettaglio_lotti, use_container_width=True)
 
-        st.markdown("#### 🗑️️ Elimina Movimento Errato (Correzione Magazzino)")
+        st.markdown("#### 🗑️ Elimina Movimento Errato (Correzione Magazzino)")
         if not df_dettaglio_lotti.empty:
             col_del1, col_del2 = st.columns([3, 1])
             with col_del1:
@@ -1188,14 +1215,14 @@ with tab7:
                     else:
                         st.info(f"Mancano {giorni_rimasti} giorni al versamento.")
 
-                    titolo_g = urllib.parse.quote(f"F24 Tributo {cod_trib} Birrificio Nobile - € {r['importo_dovuto']:.2f}")
+                    titolo_g = urllib.parse.quote(f"F24 Tributo {cod_trib} BrewDesk - € {r['importo_dovuto']:.2f}")
                     desc_g = urllib.parse.quote(f"Versamento F24 Codice Tributo {cod_trib} ({desc_trib}): € {r['importo_dovuto']:.2f}. Note: {r['note']}")
                     gcal_url = f"https://calendar.google.com/calendar/render?action=TEMPLATE&text={titolo_g}&details={desc_g}&dates={scad_date.strftime('%Y%m%d')}/{scad_date.strftime('%Y%m%d')}"
                     
                     st.link_button(f"🌐 Sincronizza Tributo {cod_trib} su Google Calendar", gcal_url)
 
                     ics_bytes = genera_file_ics(
-                        f"F24 Tributo {cod_trib} Birrificio - € {r['importo_dovuto']:.2f}",
+                        f"F24 Tributo {cod_trib} BrewDesk - € {r['importo_dovuto']:.2f}",
                         f"Versamento F24 Dogane Tributo {cod_trib} ({desc_trib}): € {r['importo_dovuto']:.2f}. {r['note']}",
                         scad_date,
                     )

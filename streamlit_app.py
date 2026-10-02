@@ -502,142 +502,159 @@ with tab2:
         )
         st.dataframe(df_imb, use_container_width=True)
 
-# TAB 3: COTTA & SALA COTTURA (CON MODIFICA LOTTI ESISTENTI)
+# TAB 3: COTTA & SALA COTTURA (CON MODIFICA ED ELIMINAZIONE)
 with tab3:
-    st.subheader("⚗️ Sala Cottura: Inserimento & Modifica Lotti Cotte")
+    st.subheader("⚗️ Sala Cottura: Inserimento & Gestione Lotti Cotte")
     
     with get_db_connection() as conn:
         df_cotte_all = pd.read_sql_query("SELECT * FROM registro_mosto ORDER BY id DESC;", conn)
 
-    modalita_cotta = st.radio("Azione:", ["➕ Registra Nuova Cotta", "✏️ Modifica Cotta / Lotto Esistente"], horizontal=True)
+    modalita_cotta = st.radio("Azione:", ["➕ Registra Nuova Cotta", "✏️ Modifica Cotta Esistente", "🗑️ Elimina Cotta Errata"], horizontal=True)
 
-    val_data = datetime.now().date()
-    val_c_num = "C26-01"
-    val_lotto = f"LOTTO-{datetime.now().strftime('%y%m%d')}"
-    val_stile = "Blonde"
-    val_cl_ini = 0.0
-    val_cl_fin = 500.0
-    val_litri = 500.0
-    val_plato = 12.0
-    val_malto = 100.0
-    val_luppolo = 1.00
-    val_lievito_kg = 0.0
-    id_cotta_modifica = None
-
-    if modalita_cotta == "✏️ Modifica Cotta / Lotto Esistente":
+    if modalita_cotta == "🗑️ Elimina Cotta Errata":
+        st.warning("⚠️ L'eliminazione rimuoverà la cotta selezionata dal registro.")
         if not df_cotte_all.empty:
-            scelte_cotte = [f"ID {r['id']} | Cotta {r['cotta_num']} - Lotto {r['lotto_sfuso']} ({r['tipo_birra']}) - {r['data']}" for _, r in df_cotte_all.iterrows()]
-            selezione_str = st.selectbox("Seleziona la cotta da modificare:", scelte_cotte)
-            id_cotta_modifica = int(selezione_str.split("|")[0].replace("ID", "").strip())
-            r_sel = df_cotte_all[df_cotte_all["id"] == id_cotta_modifica].iloc[0]
-
-            try:
-                val_data = datetime.strptime(str(r_sel["data"]), "%Y-%m-%d").date()
-            except Exception:
-                val_data = datetime.now().date()
-            val_c_num = str(r_sel["cotta_num"])
-            val_lotto = str(r_sel["lotto_sfuso"])
-            val_stile = str(r_sel["tipo_birra"])
-            val_cl_ini = float(r_sel.get("contalitri_inizio", 0.0) or 0.0)
-            val_cl_fin = float(r_sel.get("contalitri_fine", 0.0) or 0.0)
-            val_litri = float(r_sel["litri_mosto"])
-            val_plato = float(r_sel["grado_plato"])
-            val_malto = float(r_sel.get("malto_usato_kg", 100.0) or 100.0)
-            val_luppolo = float(r_sel.get("luppolo_usato_kg", 1.00) or 1.00)
-            val_lievito_kg = float(r_sel.get("lievito_usato_kg", 0.0) or 0.0)
+            scelte_cotte_del = [f"ID {r['id']} | Cotta {r['cotta_num']} - Lotto {r['lotto_sfuso']} ({r['tipo_birra']}) - {r['data']}" for _, r in df_cotte_all.iterrows()]
+            sel_del = st.selectbox("Seleziona la cotta da eliminare:", scelte_cotte_del)
+            id_del = int(sel_del.split("|")[0].replace("ID", "").strip())
+            
+            if st.button("Conferma ed Elimina Cotta Definitivamente", type="primary"):
+                with get_db_connection() as conn:
+                    with conn.cursor() as c:
+                        c.execute("DELETE FROM registro_mosto WHERE id=%s;", (id_del,))
+                    conn.commit()
+                st.success(f"Cotta ID {id_del} eliminata con successo!")
+                st.rerun()
         else:
-            st.info("Nessuna cotta presente da modificare.")
+            st.info("Nessuna cotta presente.")
+    else:
+        val_data = datetime.now().date()
+        val_c_num = "C26-01"
+        val_lotto = f"LOTTO-{datetime.now().strftime('%y%m%d')}"
+        val_stile = "Blonde"
+        val_cl_ini = 0.0
+        val_cl_fin = 500.0
+        val_litri = 500.0
+        val_plato = 12.0
+        val_malto = 100.0
+        val_luppolo = 1.00
+        val_lievito_kg = 0.0
+        id_cotta_modifica = None
 
-    col_d1, col_d2, col_d3 = st.columns(3)
-    with col_d1:
-        data_cotta_sel = st.date_input("Data di Produzione / Cotta", value=val_data)
-    with col_d2:
-        c_num = st.text_input("N° Cotta", value=val_c_num)
-    with col_d3:
-        lotto_sfuso = st.text_input("Lotto Mosto Sfuso", value=val_lotto)
+        if modalita_cotta == "✏️ Modifica Cotta Esistente":
+            if not df_cotte_all.empty:
+                scelte_cotte = [f"ID {r['id']} | Cotta {r['cotta_num']} - Lotto {r['lotto_sfuso']} ({r['tipo_birra']}) - {r['data']}" for _, r in df_cotte_all.iterrows()]
+                selezione_str = st.selectbox("Seleziona la cotta da modificare:", scelte_cotte)
+                id_cotta_modifica = int(selezione_str.split("|")[0].replace("ID", "").strip())
+                r_sel = df_cotte_all[df_cotte_all["id"] == id_cotta_modifica].iloc[0]
 
-    stile = st.text_input("Stile Birra (es. Blonde, Golden Ale, Pilsner, Dubbel, APA)", value=val_stile)
-
-    st.write("---")
-    st.markdown("#### 📟 Rilevazione Contalitri Fiscale (Dogane)")
-    col_cl1, col_cl2, col_cl3 = st.columns(3)
-    with col_cl1:
-        cl_inizio = st.number_input("Lettura Iniziale Contalitri", min_value=0.0, step=10.0, value=val_cl_ini)
-    with col_cl2:
-        cl_fine = st.number_input("Lettura Finale Contalitri", min_value=0.0, step=10.0, value=val_cl_fin)
-    with col_cl3:
-        litri_calcolati_cl = max(0.0, cl_fine - cl_inizio)
-        st.metric("Litri Mosto Rilevati da Contalitri", f"{litri_calcolati_cl:.1f} LT")
-
-    litri_mosto_reali = st.number_input("Litri Mosto Reali Trasferiti al Fermentatore", min_value=0.0, step=10.0, value=val_litri if val_litri > 0 else (litri_calcolati_cl if litri_calcolati_cl > 0 else 500.0))
-    plato = st.number_input("Grado Plato Rilevato (°P)", min_value=0.0, step=0.1, value=val_plato)
-
-    st.write("---")
-    st.markdown("#### 🌾 Materie Prime Impiegate & Calcolo Resa")
-    col_m1, col_m2 = st.columns(2)
-    with col_m1:
-        m_usato = st.number_input("Kg Malto Macinato", min_value=0.0, step=5.0, value=val_malto)
-        l_usato = st.number_input("Kg Luppolo Impiegato", min_value=0.0, step=0.05, value=val_luppolo)
-
-        sg = 1 + (plato / (258.6 - ((plato / 258.2) * 227.1)))
-        estratto_kg = (litri_mosto_reali * plato * sg) / 100.0 if litri_mosto_reali > 0 else 0
-        resa_perc = (estratto_kg / m_usato * 100.0) if m_usato > 0 else 0.0
-        st.info(f"📊 **Resa di Sala Cottura Calcolata: {resa_perc:.1f}%**")
-
-    with col_m2:
-        tipo_lievito = st.radio(
-            "Origine Lievito:",
-            ["Recuperato / Ripitching (NESSUNO scarico magazzino)", "Nuova confezione (SCARICA magazzino)"],
-            index=0 if val_lievito_kg == 0.0 else 1
-        )
-        if "Nuova confezione" in tipo_lievito:
-            u_lievito = st.selectbox("Unità di Misura Lievito:", ["Chilogrammi (kg)", "Grammi (g)"])
-            if u_lievito == "Grammi (g)":
-                y_input = st.number_input("Quantità Lievito (Grammi)", min_value=0.0, step=50.0, value=(val_lievito_kg * 1000.0 if val_lievito_kg > 0 else 500.0))
-                y_kg = y_input / 1000.0
+                try:
+                    val_data = datetime.strptime(str(r_sel["data"]), "%Y-%m-%d").date()
+                except Exception:
+                    val_data = datetime.now().date()
+                val_c_num = str(r_sel["cotta_num"])
+                val_lotto = str(r_sel["lotto_sfuso"])
+                val_stile = str(r_sel["tipo_birra"])
+                val_cl_ini = float(r_sel.get("contalitri_inizio", 0.0) or 0.0)
+                val_cl_fin = float(r_sel.get("contalitri_fine", 0.0) or 0.0)
+                val_litri = float(r_sel["litri_mosto"])
+                val_plato = float(r_sel["grado_plato"])
+                val_malto = float(r_sel.get("malto_usato_kg", 100.0) or 100.0)
+                val_luppolo = float(r_sel.get("luppolo_usato_kg", 1.00) or 1.00)
+                val_lievito_kg = float(r_sel.get("lievito_usato_kg", 0.0) or 0.0)
             else:
-                y_input = st.number_input("Quantità Lievito (Kg)", min_value=0.0, step=0.1, value=(val_lievito_kg if val_lievito_kg > 0 else 0.5))
-                y_kg = y_input
-            nota_lievito = f"Nuovo ({y_input} {u_lievito})"
-        else:
-            y_kg = 0.0
-            nota_lievito = "Recuperato (Ripitching)"
+                st.info("Nessuna cotta presente da modificare.")
 
-    lbl_pulsante = "Aggiorna Dati Cotta Selezionata" if modalita_cotta == "✏️ Modifica Cotta / Lotto Esistente" else "Salva Cotta e Scarica Magazzino"
-    
-    if st.button(lbl_pulsante):
-        with get_db_connection() as conn:
-            with conn.cursor() as c:
-                if modalita_cotta == "✏️ Modifica Cotta / Lotto Esistente" and id_cotta_modifica:
-                    c.execute(
-                        """
-                        UPDATE registro_mosto
-                        SET data=%s, cotta_num=%s, tipo_birra=%s, litri_mosto=%s, grado_plato=%s, lotto_sfuso=%s, note_lievito=%s,
-                            contalitri_inizio=%s, contalitri_fine=%s, malto_usato_kg=%s, luppolo_usato_kg=%s, lievito_usato_kg=%s, resa_perc=%s
-                        WHERE id=%s;
-                        """,
-                        (data_cotta_sel.strftime("%Y-%m-%d"), c_num, stile, litri_mosto_reali, plato, lotto_sfuso, nota_lievito,
-                         cl_inizio, cl_fine, m_usato, l_usato, y_kg, resa_perc, id_cotta_modifica),
-                    )
-                    st.success(f"Cotta ID {id_cotta_modifica} ({lotto_sfuso}) aggiornata con successo!")
+        col_d1, col_d2, col_d3 = st.columns(3)
+        with col_d1:
+            data_cotta_sel = st.date_input("Data di Produzione / Cotta", value=val_data)
+        with col_d2:
+            c_num = st.text_input("N° Cotta", value=val_c_num)
+        with col_d3:
+            lotto_sfuso = st.text_input("Lotto Mosto Sfuso", value=val_lotto)
+
+        stile = st.text_input("Stile Birra (es. Blonde, Golden Ale, Pilsner, Dubbel, APA)", value=val_stile)
+
+        st.write("---")
+        st.markdown("#### 📟 Rilevazione Contalitri Fiscale (Dogane)")
+        col_cl1, col_cl2, col_cl3 = st.columns(3)
+        with col_cl1:
+            cl_inizio = st.number_input("Lettura Iniziale Contalitri", min_value=0.0, step=10.0, value=val_cl_ini)
+        with col_cl2:
+            cl_fine = st.number_input("Lettura Finale Contalitri", min_value=0.0, step=10.0, value=val_cl_fin)
+        with col_cl3:
+            litri_calcolati_cl = max(0.0, cl_fine - cl_inizio)
+            st.metric("Litri Mosto Rilevati da Contalitri", f"{litri_calcolati_cl:.1f} LT")
+
+        litri_mosto_reali = st.number_input("Litri Mosto Reali Trasferiti al Fermentatore", min_value=0.0, step=10.0, value=val_litri if val_litri > 0 else (litri_calcolati_cl if litri_calcolati_cl > 0 else 500.0))
+        plato = st.number_input("Grado Plato Rilevato (°P)", min_value=0.0, step=0.1, value=val_plato)
+
+        st.write("---")
+        st.markdown("#### 🌾 Materie Prime Impiegate & Calcolo Resa")
+        col_m1, col_m2 = st.columns(2)
+        with col_m1:
+            m_usato = st.number_input("Kg Malto Macinato", min_value=0.0, step=5.0, value=val_malto)
+            l_usato = st.number_input("Kg Luppolo Impiegato", min_value=0.0, step=0.05, value=val_luppolo)
+
+            sg = 1 + (plato / (258.6 - ((plato / 258.2) * 227.1)))
+            estratto_kg = (litri_mosto_reali * plato * sg) / 100.0 if litri_mosto_reali > 0 else 0
+            resa_perc = (estratto_kg / m_usato * 100.0) if m_usato > 0 else 0.0
+            st.info(f"📊 **Resa di Sala Cottura Calcolata: {resa_perc:.1f}%**")
+
+        with col_m2:
+            tipo_lievito = st.radio(
+                "Origine Lievito:",
+                ["Recuperato / Ripitching (NESSUNO scarico magazzino)", "Nuova confezione (SCARICA magazzino)"],
+                index=0 if val_lievito_kg == 0.0 else 1
+            )
+            if "Nuova confezione" in tipo_lievito:
+                u_lievito = st.selectbox("Unità di Misura Lievito:", ["Chilogrammi (kg)", "Grammi (g)"])
+                if u_lievito == "Grammi (g)":
+                    y_input = st.number_input("Quantità Lievito (Grammi)", min_value=0.0, step=50.0, value=(val_lievito_kg * 1000.0 if val_lievito_kg > 0 else 500.0))
+                    y_kg = y_input / 1000.0
                 else:
-                    c.execute(
-                        """
-                        INSERT INTO registro_mosto (data, cotta_num, tipo_birra, litri_mosto, grado_plato, lotto_sfuso, note_lievito, contalitri_inizio, contalitri_fine, malto_usato_kg, luppolo_usato_kg, lievito_usato_kg, resa_perc)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
-                        """,
-                        (data_cotta_sel.strftime("%Y-%m-%d"), c_num, stile, litri_mosto_reali, plato, lotto_sfuso, nota_lievito, cl_inizio, cl_fine, m_usato, l_usato, y_kg, resa_perc),
-                    )
-                    c.execute(
-                        """
-                        INSERT INTO materie_prime (tipo, data, riferimento, azienda, malto_kg, luppolo_kg, lievito_kg)
-                        VALUES ('SCARICO', %s, %s, 'COTTA PRODUZIONE', %s, %s, %s);
-                        """,
-                        (data_cotta_sel.strftime("%Y-%m-%d"), f"Cotta {c_num} - {lotto_sfuso}", m_usato, l_usato, y_kg),
-                    )
-                    st.success(f"Nuova cotta registrata! Resa: {resa_perc:.1f}% - Scaricati {m_usato:.1f} kg malto.")
-            conn.commit()
-        st.rerun()
+                    y_input = st.number_input("Quantità Lievito (Kg)", min_value=0.0, step=0.1, value=(val_lievito_kg if val_lievito_kg > 0 else 0.5))
+                    y_kg = y_input
+                nota_lievito = f"Nuovo ({y_input} {u_lievito})"
+            else:
+                y_kg = 0.0
+                nota_lievito = "Recuperato (Ripitching)"
+
+        lbl_pulsante = "Aggiorna Dati Cotta Selezionata" if modalita_cotta == "✏️ Modifica Cotta Esistente" else "Salva Cotta e Scarica Magazzino"
+        
+        if st.button(lbl_pulsante):
+            with get_db_connection() as conn:
+                with conn.cursor() as c:
+                    if modalita_cotta == "✏️ Modifica Cotta Esistente" and id_cotta_modifica:
+                        c.execute(
+                            """
+                            UPDATE registro_mosto
+                            SET data=%s, cotta_num=%s, tipo_birra=%s, litri_mosto=%s, grado_plato=%s, lotto_sfuso=%s, note_lievito=%s,
+                                contalitri_inizio=%s, contalitri_fine=%s, malto_usato_kg=%s, luppolo_usato_kg=%s, lievito_usato_kg=%s, resa_perc=%s
+                            WHERE id=%s;
+                            """,
+                            (data_cotta_sel.strftime("%Y-%m-%d"), c_num, stile, litri_mosto_reali, plato, lotto_sfuso, nota_lievito,
+                             cl_inizio, cl_fine, m_usato, l_usato, y_kg, resa_perc, id_cotta_modifica),
+                        )
+                        st.success(f"Cotta ID {id_cotta_modifica} ({lotto_sfuso}) aggiornata con successo!")
+                    else:
+                        c.execute(
+                            """
+                            INSERT INTO registro_mosto (data, cotta_num, tipo_birra, litri_mosto, grado_plato, lotto_sfuso, note_lievito, contalitri_inizio, contalitri_fine, malto_usato_kg, luppolo_usato_kg, lievito_usato_kg, resa_perc)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+                            """,
+                            (data_cotta_sel.strftime("%Y-%m-%d"), c_num, stile, litri_mosto_reali, plato, lotto_sfuso, nota_lievito, cl_inizio, cl_fine, m_usato, l_usato, y_kg, resa_perc),
+                        )
+                        c.execute(
+                            """
+                            INSERT INTO materie_prime (tipo, data, riferimento, azienda, malto_kg, luppolo_kg, lievito_kg)
+                            VALUES ('SCARICO', %s, %s, 'COTTA PRODUZIONE', %s, %s, %s);
+                            """,
+                            (data_cotta_sel.strftime("%Y-%m-%d"), f"Cotta {c_num} - {lotto_sfuso}", m_usato, l_usato, y_kg),
+                        )
+                        st.success(f"Nuova cotta registrata! Resa: {resa_perc:.1f}% - Scaricati {m_usato:.1f} kg malto.")
+                conn.commit()
+            st.rerun()
 
 # TAB 4: CONFEZIONAMENTO (CON MODIFICA MANUALE LITRI EFFETTIVI E SCARTO)
 with tab4:
@@ -846,7 +863,7 @@ with tab5:
             st.success("Scarico vendita registrato!")
             st.rerun()
 
-# TAB 6: GIACENZE MAGAZZINO COMPLETE
+# TAB 6: GIACENZE MAGAZZINO & ELIMINAZIONE MOVIMENTI
 with tab6:
     st.subheader("🏛️ Giacenze Magazzino Birra Pronta & Prodotti Finiti")
     st.write("Consistenze aggiornate in tempo reale da cotte, confezionamenti e scarichi XML.")
@@ -888,6 +905,29 @@ with tab6:
             conn,
         )
         st.dataframe(df_dettaglio_lotti, use_container_width=True)
+
+        # SEZIONE PER ELIMINARE MOVIMENTI ERRATI
+        st.markdown("#### 🗑️ Elimina Movimento Errato (Correzione Magazzino)")
+        if not df_dettaglio_lotti.empty:
+            col_del1, col_del2 = st.columns([3, 1])
+            with col_del1:
+                opzioni_mov_del = [
+                    f"ID {r['id']} | {r['Data']} - {r['Movimento']} {r['Pz']} pz ({r['Formato']} - {r['Litri']} LT) - Rif: {r['Riferimento']}"
+                    for _, r in df_dettaglio_lotti.iterrows()
+                ]
+                sel_mov = st.selectbox("Seleziona il movimento errato da eliminare:", opzioni_mov_del)
+                id_mov_da_cancellare = int(sel_mov.split("|")[0].replace("ID", "").strip())
+            with col_del2:
+                st.write("") # spaziatore
+                st.write("")
+                if st.button("🗑️ Elimina Movimento", type="primary"):
+                    with conn.cursor() as c:
+                        c.execute("DELETE FROM birra_condizionata WHERE id=%s;", (id_mov_da_cancellare,))
+                    conn.commit()
+                    st.success(f"Movimento ID {id_mov_da_cancellare} rimosso! Magazzino ricalcolato.")
+                    st.rerun()
+        else:
+            st.info("Nessun movimento presente in archivio.")
 
         st.write("---")
         st.write("#### Registro Cotte & Contalitri (Allegato I)")

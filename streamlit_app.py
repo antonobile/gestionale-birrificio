@@ -269,6 +269,7 @@ def init_db():
                 );
             """)
 
+            # AGGIUNTE AUTOMATICHE COLONNE MANCANTI
             c.execute("ALTER TABLE registro_mosto ADD COLUMN IF NOT EXISTS data_preventiva TEXT DEFAULT '';")
             c.execute("ALTER TABLE registro_mosto ADD COLUMN IF NOT EXISTS consumo_gas_mc NUMERIC DEFAULT 0;")
             c.execute("ALTER TABLE registro_mosto ADD COLUMN IF NOT EXISTS consumo_elettrico_kwh NUMERIC DEFAULT 0;")
@@ -281,11 +282,18 @@ def init_db():
             c.execute("ALTER TABLE registro_mosto ADD COLUMN IF NOT EXISTS costo_acqua_lavaggio NUMERIC DEFAULT 0;")
             c.execute("ALTER TABLE registro_mosto ADD COLUMN IF NOT EXISTS prodotti_sanificazione_json TEXT DEFAULT '[]';")
             c.execute("ALTER TABLE registro_mosto ADD COLUMN IF NOT EXISTS costo_totale_sanificazione NUMERIC DEFAULT 0;")
+            
             c.execute("ALTER TABLE ricette ADD COLUMN IF NOT EXISTS altri_ingredienti_json TEXT DEFAULT '[]';")
             c.execute("ALTER TABLE materie_prime ADD COLUMN IF NOT EXISTS costo_malto_kg NUMERIC DEFAULT 1.40;")
             c.execute("ALTER TABLE materie_prime ADD COLUMN IF NOT EXISTS costo_luppolo_kg NUMERIC DEFAULT 28.00;")
             c.execute("ALTER TABLE materie_prime ADD COLUMN IF NOT EXISTS costo_lievito_kg NUMERIC DEFAULT 65.00;")
             c.execute("ALTER TABLE scadenze_accise ADD COLUMN IF NOT EXISTS codice_tributo TEXT DEFAULT '2803';")
+            
+            # Colonne telemetria e configurazione tank
+            c.execute("ALTER TABLE telemetria_fermentatori ADD COLUMN IF NOT EXISTS densita NUMERIC DEFAULT 0;")
+            c.execute("ALTER TABLE telemetria_fermentatori ADD COLUMN IF NOT EXISTS pressione NUMERIC DEFAULT 0;")
+            c.execute("ALTER TABLE telemetria_fermentatori ADD COLUMN IF NOT EXISTS setpoint NUMERIC DEFAULT 18.0;")
+            c.execute("ALTER TABLE telemetria_fermentatori ADD COLUMN IF NOT EXISTS stato TEXT DEFAULT 'Fermentazione';")
 
         conn.commit()
 
@@ -969,7 +977,7 @@ with tab1:
         col_riep2.metric("CIP & Sanificazione", f"€ {costo_totale_cip:.2f}")
         col_riep3.metric("Costo Vivo Mosto / Litro", f"€ {costo_lt:.3f} / LT", delta=f"{litri_mosto_reali:,.0f} LT")
 
-        lbl_btn = "Aggiorna Cotta Selezionata" if modalita_cotta == "✏️ Modifica Cotta Esistente" else "Salva Cotta in Allegato I & Scarica Materie Prime"
+        lbl_btn = "Aggiorna Cotta Selezionata" if modalita_cotta == "✏️️ Modifica Cotta Esistente" else "Salva Cotta in Allegato I & Scarica Materie Prime"
 
         if st.button(lbl_btn, type="primary", key="btn_salva_cotta_allegato1"):
             with get_db_connection() as conn:
@@ -1069,7 +1077,7 @@ with tab2:
             st.dataframe(df_conf_fermentatori[["numero_tank", "nome_tank", "protocollo", "capacita_lt", "setpoint_temperatura", "stato_attivo"]], use_container_width=True)
             
             tank_da_del = st.selectbox("Seleziona tank da rimuovere:", [f"Tank #{r['numero_tank']} - {r['nome_tank']}" for _, r in df_conf_fermentatori.iterrows()])
-            if st.button("🗑️ Rimuovi Tank Selezionato", type="primary"):
+            if st.button("🗑️️ Rimuovi Tank Selezionato", type="primary"):
                 num_estratto = int(tank_da_del.split(" - ")[0].replace("Tank #", "").strip())
                 with get_db_connection() as conn:
                     with conn.cursor() as c:
@@ -1082,7 +1090,7 @@ with tab2:
             st.info("Nessun fermentatore configurato. Aggiungine uno sopra.")
 
     elif sub_iot == "🎛️ Monitoraggio & Controllo Remoto Setpoint":
-        st.markdown("#### 🎛️️ Dashboard Live & Controllo Remoto Setpoint")
+        st.markdown("#### 🎛 Dashboard Live & Controllo Remoto Setpoint")
         with get_db_connection() as conn:
             df_live = pd.read_sql_query("""
                 SELECT DISTINCT ON (tank_id) 

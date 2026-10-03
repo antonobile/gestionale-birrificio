@@ -1033,7 +1033,7 @@ with tab2:
     st.subheader("📡 Cantina Pro: Setup Fermentatori & Controllo Multi-Protocollo")
     st.info("Configura i tuoi fermentatori, assegna un nome, un numero e scegli se abbinarli a protocolli standard (MQTT, Modbus RTU/TCP, OPC UA, iSpindel o Inkbird bridge). Puoi impostare i setpoint di temperatura direttamente da remoto.")
 
-    sub_iot = st.radio("Sezione:", ["⚙️ Configurazione & Aggiunta Fermentatori", "🎛️ Monitoraggio & Controllo Remoto Setpoint", "🧪 Test / Simulatore Telemetria"], horizontal=True)
+    sub_iot = st.radio("Sezione:", ["⚙️️ Configurazione & Aggiunta Fermentatori", "🎛️ Monitoraggio & Controllo Remoto Setpoint", "🧪 Test / Simulatore Telemetria"], horizontal=True)
 
     with get_db_connection() as conn:
         df_conf_fermentatori = pd.read_sql_query("SELECT * FROM configurazione_fermentatori ORDER BY numero_tank ASC;", conn)
@@ -1077,7 +1077,7 @@ with tab2:
             st.dataframe(df_conf_fermentatori[["numero_tank", "nome_tank", "protocollo", "capacita_lt", "setpoint_temperatura", "stato_attivo"]], use_container_width=True)
             
             tank_da_del = st.selectbox("Seleziona tank da rimuovere:", [f"Tank #{r['numero_tank']} - {r['nome_tank']}" for _, r in df_conf_fermentatori.iterrows()])
-            if st.button("🗑️️ Rimuovi Tank Selezionato", type="primary"):
+            if st.button("🗑️ Rimuovi Tank Selezionato", type="primary"):
                 num_estratto = int(tank_da_del.split(" - ")[0].replace("Tank #", "").strip())
                 with get_db_connection() as conn:
                     with conn.cursor() as c:
@@ -1159,6 +1159,17 @@ with tab2:
                     conn.commit()
                 st.success("Pacchetto telemetria simulato e registrato con successo!")
                 st.rerun()
+
+        st.write("---")
+        st.markdown("#### 🗑️ Pulizia Dati di Test")
+        if st.button("Elimina Tutti i Dati di Telemetria Fittizi", type="primary"):
+            with get_db_connection() as conn:
+                with conn.cursor() as c:
+                    c.execute("DELETE FROM telemetria_fermentatori;")
+                conn.commit()
+            st.cache_data.clear()
+            st.success("Tabella telemetria ripulita con successo!")
+            st.rerun()
 
 # =========================================================================
 # TAB 3: GESTIONE FUSTI NEI PUB & CAUZIONI (AUTOMATIZZATO)

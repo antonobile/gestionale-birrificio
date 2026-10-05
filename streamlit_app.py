@@ -852,6 +852,1027 @@ def genera_pdf_commercialista(val_mp, val_imb, val_pf, tot_bilancio, malto, lupp
 
     return bytes(pdf.output())
 
+# =========================================================================
+# ===== NUOVI MODULI BREWDESK =============================================
+# Annotazioni rapide & avvisi (Home) | Scadenze & promemoria | Pianificatore
+# cotte con export .ics.
+# Blocco AGGIUNTO: non modifica nessuna funzione, tabella o logica preesistente.
+# Le nuove tabelle (annotazioni, promemoria_scadenze, pianificazione_cotte)
+# vengono create da init_db_extra(); le tabelle esistenti sono solo lette
+# (fatture_utenze, scadenze_accise, ricette, configurazione_fermentatori).
+# =========================================================================
+import calendar as _calendar
+import html as _html
+import math as _math
+from datetime import date as _date, timedelta as _timedelta, timezone as _timezone
+from psycopg2.extras import RealDictCursor
+try:
+    from zoneinfo import ZoneInfo as _ZoneInfo
+except Exception:
+    _ZoneInfo = None
+
+FUSO_ORARIO_APP = "Europe/Rome"
+SOGLIA_URGENTE_GG = 3      # scadenze entro 3 giorni = arancione
+SOGLIA_IMMINENTE_GG = 7    # scadenze entro 7 giorni = giallo
+
+# Allarmi .ics per eventi "tutto il giorno" (il trigger e' relativo alle 00:00 del giorno)
+ALLARME_3GG_PRIMA = "-P2DT15H"    # ore 09:00 di 3 giorni prima
+ALLARME_GIORNO_PRIMA = "-PT15H"   # ore 09:00 del giorno prima
+ALLARME_STESSO_GIORNO = "PT8H"    # ore 08:00 del giorno stesso
+
+CATEGORIE_NOTE = {
+    "Manutenzione":       {"emoji": "🔧", "bg": "#FFE9A8", "bordo": "#D9A400"},
+    "Ordinazioni":        {"emoji": "🛒", "bg": "#CFE8FF", "bordo": "#3B8FDB"},
+    "Note di brassaggio": {"emoji": "🍺", "bg": "#D8F3C8", "bordo": "#5DAA3A"},
+    "Cantina & Qualità":  {"emoji": "🧪", "bg": "#EAD9FF", "bordo": "#8E5BD6"},
+    "Generale":           {"emoji": "📝", "bg": "#FFE0D6", "bordo": "#E07A5F"},
+}
+CATEGORIE_SCADENZE = [
+    "Manutenzione", "Bolletta / Utenza", "Accise & Dogane", "Licenze & Certificazioni",
+    "Ordinazioni & Fornitori", "Fisco & Tributi", "Altro",
+]
+RICORRENZE = {"Nessuna": 0, "Mensile": 1, "Trimestrale": 3, "Semestrale": 6, "Annuale": 12}
+ORIGINI_SCADENZA = {
+    "manuale": "✍️ Manuale",
+    "bolletta": "💡 Bolletta (collegata)",
+    "accise": "🏛️ Accise (collegata)",
+    "nota": "📌 Nota rapida (collegata)",
+}
+LIVELLI_SCADENZA = {
+    "SCADUTA":     ("🔴", "#D62828"),
+    "OGGI":        ("🟠", "#E8590C"),
+    "URGENTE":     ("🟠", "#E8590C"),
+    "IMMINENTE":   ("🟡", "#B58900"),
+    "PROGRAMMATA": ("🟢", "#2A9D8F"),
+    "NESSUNA":     ("⚪", "#8A8A8A"),
+}
+STATI_PIANO = ["PIANIFICATA", "IN FERMENTAZIONE", "CONFEZIONATA", "ANNULLATA"]
+STATI_PIANO_ATTIVI = ("PIANIFICATA", "IN FERMENTAZIONE")
+EMOJI_STATO_PIANO = {"PIANIFICATA": "🗓️", "IN FERMENTAZIONE": "🫧", "CONFEZIONATA": "✅", "ANNULLATA": "❌"}
+TIPI_CONTENITORE = ["PolyKeg", "Dolium", "Altro fusto"]
+FORMATI_FUSTO_L = [10, 12, 20, 24, 25, 30]
+
+
+# --- Utilita' generiche ---------------------------------------------------
+def oggi_it():
+    """Data odierna nel fuso italiano (Cloud Run lavora in UTC)."""
+    try:
+        if _ZoneInfo is not None:
+            return datetime.now(_ZoneInfo(FUSO_ORARIO_APP)).date()
+    except Exception:
+        pass
+    return datetime.now().date()
+
+
+def _a_data(v):
+    if v is None:
+        return None
+    if isinstance(v, datetime):
+        return v.date()
+    if isinstance(v, _date):
+        return v
+    try:
+        return datetime.fromisoformat(str(v)[:10]).date()
+    except Exception:
+        return None
+
+
+def aggiungi_mesi(d, mesi):
+    m = d.month - 1 + mesi
+    anno = d.year + m // 12
+    mese = m % 12 + 1
+    giorno = min(d.day, _calendar.monthrange(anno, mese)[1])
+    return _date(anno, mese, giorno)
+
+
+def testo_giorni(gg):
+    if gg is None:
+        return ""
+    if gg < 0:
+        return "scaduta da 1 giorno" if gg == -1 else f"scaduta da {-gg} giorni"
+    if gg == 0:
+        return "scade oggi"
+    if gg == 1:
+        return "scade domani"
+    return f"tra {gg} giorni"
+
+
+def livello_scadenza(data_scad, oggi=None):
+    oggi = oggi or oggi_it()
+    if data_scad is None:
+        codice, gg = "NESSUNA", None
+    else:
+        gg = (data_scad - oggi).days
+        if gg < 0:
+            codice = "SCADUTA"
+        elif gg == 0:
+            codice = "OGGI"
+        elif gg <= SOGLIA_URGENTE_GG:
+            codice = "URGENTE"
+        elif gg <= SOGLIA_IMMINENTE_GG:
+            codice = "IMMINENTE"
+        else:
+            codice = "PROGRAMMATA"
+    emoji, colore = LIVELLI_SCADENZA[codice]
+    return {"codice": codice, "emoji": emoji, "colore": colore, "giorni": gg, "testo": testo_giorni(gg)}
+
+
+def _h(txt):
+    """Escape HTML per i post-it (testo utente) + newline -> <br>. Blocca anche il LaTeX di st.markdown."""
+    s = _html.escape(str(txt or ""), quote=True).replace("$", "&#36;")
+    return s.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
+
+
+def _md(txt):
+    """Escape dei caratteri speciali markdown per testo utente mostrato in st.error/warning/info."""
+    return re.sub(r"([\\`*_{}\[\]()#+!|$<>~:])", r"\\\1", str(txt or "").replace("\n", " "))
+
+
+# --- Accesso al database (usa il pool esistente) ---------------------------
+def db_leggi_molti(query_list):
+    """Esegue piu' SELECT con una sola connessione. query_list = [(sql, params_o_None), ...]"""
+    risultati = []
+    with get_db_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as c:
+            for sql, params in query_list:
+                c.execute(sql, params)
+                risultati.append([dict(r) for r in c.fetchall()])
+    return risultati
+
+
+def db_leggi(sql, params=None):
+    return db_leggi_molti([(sql, params)])[0]
+
+
+def db_scrivi(operazioni):
+    """Esegue piu' scritture nella stessa transazione. operazioni = [(sql, params), ...]"""
+    with get_db_connection() as conn:
+        with conn.cursor() as c:
+            for sql, params in operazioni:
+                c.execute(sql, params)
+        conn.commit()
+
+
+@st.cache_resource
+def init_db_extra():
+    with get_db_connection() as conn:
+        with conn.cursor() as c:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS annotazioni (
+                    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                    categoria TEXT NOT NULL DEFAULT 'Generale',
+                    titolo TEXT DEFAULT '',
+                    testo TEXT DEFAULT '',
+                    data_scadenza DATE,
+                    completata BOOLEAN DEFAULT FALSE,
+                    creato_da TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_annotazioni_scadenza ON annotazioni(data_scadenza);")
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS promemoria_scadenze (
+                    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                    titolo TEXT NOT NULL,
+                    categoria TEXT DEFAULT 'Altro',
+                    data_scadenza DATE NOT NULL,
+                    importo NUMERIC,
+                    ricorrenza TEXT DEFAULT 'Nessuna',
+                    stato TEXT DEFAULT 'APERTA',
+                    note TEXT DEFAULT '',
+                    completata_il DATE,
+                    creato_da TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_promemoria_stato_data ON promemoria_scadenze(stato, data_scadenza);")
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS pianificazione_cotte (
+                    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                    nome_birra TEXT NOT NULL,
+                    stile TEXT DEFAULT '',
+                    litri_stimati NUMERIC DEFAULT 0,
+                    data_cotta DATE NOT NULL,
+                    data_confezionamento DATE NOT NULL,
+                    contenitore TEXT DEFAULT 'PolyKeg',
+                    formato_litri NUMERIC DEFAULT 20,
+                    calo_stimato_perc NUMERIC DEFAULT 8,
+                    n_fusti INTEGER DEFAULT 0,
+                    tank TEXT DEFAULT '',
+                    stato TEXT DEFAULT 'PIANIFICATA',
+                    note TEXT DEFAULT '',
+                    creato_da TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_pianificazione_data ON pianificazione_cotte(data_cotta);")
+        conn.commit()
+    return True
+
+
+try:
+    init_db_extra()
+    DB_EXTRA_OK = True
+except Exception as _e_init_extra:
+    DB_EXTRA_OK = False
+    st.error(f"Impossibile inizializzare le tabelle dei nuovi moduli (note, scadenze, pianificatore): {_e_init_extra}")
+
+
+# --- Query condivise -------------------------------------------------------
+SQL_NOTE_APERTE = """
+    SELECT id, categoria, titolo, testo, data_scadenza, completata, creato_da, created_at
+    FROM annotazioni
+    WHERE COALESCE(completata, FALSE) = FALSE
+    ORDER BY (data_scadenza IS NULL), data_scadenza, id DESC
+    LIMIT 300
+"""
+SQL_NOTE_COMPLETATE = """
+    SELECT id, categoria, titolo, testo, data_scadenza, completata, creato_da, created_at
+    FROM annotazioni
+    WHERE COALESCE(completata, FALSE) = TRUE
+    ORDER BY id DESC
+    LIMIT 30
+"""
+SQL_PROMEMORIA_APERTI = """
+    SELECT id, titolo, categoria, data_scadenza, importo, ricorrenza, stato, note
+    FROM promemoria_scadenze WHERE stato = 'APERTA'
+"""
+SQL_PROMEMORIA_TUTTI = """
+    SELECT id, titolo, categoria, data_scadenza, importo, ricorrenza, stato, note
+    FROM promemoria_scadenze
+"""
+SQL_BOLLETTE_APERTE = """
+    SELECT id, tipo_utenza, fornitore, numero_fattura, data_scadenza, totale_fattura
+    FROM fatture_utenze
+    WHERE data_scadenza IS NOT NULL AND COALESCE(stato_pagamento, 'DA PAGARE') <> 'PAGATA'
+"""
+SQL_ACCISE_APERTE = """
+    SELECT id, periodo_riferimento, data_scadenza, codice_tributo, importo_dovuto, stato, note
+    FROM scadenze_accise
+    WHERE data_scadenza IS NOT NULL
+      AND UPPER(COALESCE(stato, '')) NOT IN ('PAGATA', 'PAGATO')
+"""
+SQL_PIANI = "SELECT * FROM pianificazione_cotte ORDER BY data_cotta, id"
+
+
+def _float_o_none(v):
+    return float(v) if v is not None else None
+
+
+def _costruisci_voci(prom, boll, acc, note):
+    """Registro unificato delle scadenze: promemoria manuali + bollette + accise + note con scadenza."""
+    voci = []
+    for r in prom:
+        voci.append({
+            "origine": "manuale", "ref_id": r["id"], "titolo": r["titolo"] or "(senza titolo)",
+            "categoria": r["categoria"] or "Altro", "data": _a_data(r["data_scadenza"]),
+            "importo": _float_o_none(r["importo"]), "ricorrenza": r["ricorrenza"] or "Nessuna",
+            "chiusa": (r["stato"] or "APERTA") != "APERTA", "note": r["note"] or "",
+        })
+    for r in boll:
+        titolo = f"{r['tipo_utenza']} — {r['fornitore'] or 'fornitore n.d.'}"
+        if r["numero_fattura"]:
+            titolo += f" (fatt. {r['numero_fattura']})"
+        voci.append({
+            "origine": "bolletta", "ref_id": r["id"], "titolo": titolo,
+            "categoria": "Bolletta / Utenza", "data": _a_data(r["data_scadenza"]),
+            "importo": _float_o_none(r["totale_fattura"]), "ricorrenza": "Nessuna",
+            "chiusa": False, "note": "",
+        })
+    for r in acc:
+        titolo = f"Accisa {r['periodo_riferimento'] or ''}".strip()
+        if r["codice_tributo"]:
+            titolo += f" (cod. tributo {r['codice_tributo']})"
+        voci.append({
+            "origine": "accise", "ref_id": r["id"], "titolo": titolo,
+            "categoria": "Accise & Dogane", "data": _a_data(r["data_scadenza"]),
+            "importo": _float_o_none(r["importo_dovuto"]), "ricorrenza": "Nessuna",
+            "chiusa": False, "note": r["note"] or "",
+        })
+    for r in note:
+        if r["data_scadenza"] is None or r["completata"]:
+            continue
+        titolo = (r["titolo"] or "").strip() or (r["testo"] or "").strip()[:70] or "(nota)"
+        voci.append({
+            "origine": "nota", "ref_id": r["id"], "titolo": titolo,
+            "categoria": r["categoria"] or "Generale", "data": _a_data(r["data_scadenza"]),
+            "importo": None, "ricorrenza": "Nessuna", "chiusa": False, "note": r["testo"] or "",
+        })
+    voci = [v for v in voci if v["data"] is not None]
+    aperte = sorted([v for v in voci if not v["chiusa"]], key=lambda v: (v["data"], v["titolo"]))
+    chiuse = sorted([v for v in voci if v["chiusa"]], key=lambda v: v["data"], reverse=True)
+    return aperte + chiuse
+
+
+def _norm_piano(r):
+    return {
+        "id": r["id"], "nome_birra": r["nome_birra"] or "", "stile": r["stile"] or "",
+        "litri": float(r["litri_stimati"] or 0), "data_cotta": _a_data(r["data_cotta"]),
+        "data_conf": _a_data(r["data_confezionamento"]), "contenitore": r["contenitore"] or "PolyKeg",
+        "formato": float(r["formato_litri"] or 0), "calo": float(r["calo_stimato_perc"] or 0),
+        "n_fusti": int(r["n_fusti"] or 0), "tank": r["tank"] or "", "stato": r["stato"] or "PIANIFICATA",
+        "note": r["note"] or "", "updated_at": r.get("updated_at"),
+    }
+
+
+def carica_scadenze(includi_chiuse=False):
+    q_prom = SQL_PROMEMORIA_TUTTI if includi_chiuse else SQL_PROMEMORIA_APERTI
+    prom, boll, acc, note = db_leggi_molti([
+        (q_prom, None), (SQL_BOLLETTE_APERTE, None), (SQL_ACCISE_APERTE, None), (SQL_NOTE_APERTE, None),
+    ])
+    return _costruisci_voci(prom, boll, acc, note)
+
+
+def carica_piani():
+    return [_norm_piano(r) for r in db_leggi(SQL_PIANI)]
+
+
+def carica_home_dati():
+    prom, boll, acc, note, piani = db_leggi_molti([
+        (SQL_PROMEMORIA_APERTI, None), (SQL_BOLLETTE_APERTE, None), (SQL_ACCISE_APERTE, None),
+        (SQL_NOTE_APERTE, None), (SQL_PIANI, None),
+    ])
+    return {
+        "note": note,
+        "voci": _costruisci_voci(prom, boll, acc, note),
+        "piani": [_norm_piano(r) for r in piani],
+    }
+
+
+# --- Azioni sulle scadenze --------------------------------------------------
+def completa_voce_scadenza(voce):
+    oggi = oggi_it()
+    if voce["origine"] == "manuale":
+        ops = [("UPDATE promemoria_scadenze SET stato='COMPLETATA', completata_il=%s WHERE id=%s",
+                (oggi, voce["ref_id"]))]
+        mesi = RICORRENZE.get(voce["ricorrenza"], 0)
+        if mesi > 0 and voce["data"]:
+            prossima = aggiungi_mesi(voce["data"], mesi)
+            while prossima <= oggi:
+                prossima = aggiungi_mesi(prossima, mesi)
+            ops.append((
+                "INSERT INTO promemoria_scadenze (titolo, categoria, data_scadenza, importo, ricorrenza, note, creato_da) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (voce["titolo"], voce["categoria"], prossima, voce["importo"], voce["ricorrenza"],
+                 voce["note"], st.session_state.get("utente_connesso", "")),
+            ))
+        db_scrivi(ops)
+    elif voce["origine"] == "bolletta":
+        db_scrivi([("UPDATE fatture_utenze SET stato_pagamento='PAGATA', data_pagamento=%s WHERE id=%s",
+                    (oggi, voce["ref_id"]))])
+    elif voce["origine"] == "accise":
+        db_scrivi([("UPDATE scadenze_accise SET stato='PAGATA' WHERE id=%s", (voce["ref_id"],))])
+    elif voce["origine"] == "nota":
+        db_scrivi([("UPDATE annotazioni SET completata=TRUE WHERE id=%s", (voce["ref_id"],))])
+
+
+# --- Calendario .ics ----------------------------------------------------------
+def _ics_testo(valore):
+    t = str(valore if valore is not None else "")
+    t = t.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
+    return t.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\\n")
+
+
+def _ics_piega(riga):
+    """RFC 5545: max 75 ottetti per riga, continuazione con uno spazio; non spezza i caratteri multibyte."""
+    if len(riga.encode("utf-8")) <= 75:
+        return riga
+    pezzi, corrente, limite = [], b"", 75
+    for ch in riga:
+        b = ch.encode("utf-8")
+        if len(corrente) + len(b) > limite:
+            pezzi.append(corrente.decode("utf-8"))
+            corrente, limite = b"", 74
+        corrente += b
+    pezzi.append(corrente.decode("utf-8"))
+    return "\r\n ".join(pezzi)
+
+
+def genera_ics(eventi, nome_calendario="BrewDesk"):
+    """
+    eventi: lista di dict {uid, data, data_fine (opz., inclusiva), titolo, descrizione (opz.),
+            promemoria (opz.: [(trigger, messaggio)]), sequence (opz.)}
+    Eventi 'tutto il giorno', compatibili con Google Calendar, Apple Calendar (iOS/macOS) e Outlook.
+    """
+    ora = datetime.now(_timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    righe = [
+        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//BrewDesk//Calendario//IT",
+        "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
+        f"X-WR-CALNAME:{_ics_testo(nome_calendario)}",
+    ]
+    for ev in eventi:
+        inizio = ev["data"]
+        fine = ev.get("data_fine") or inizio
+        righe += [
+            "BEGIN:VEVENT",
+            f"UID:{ev['uid']}",
+            f"DTSTAMP:{ora}",
+            f"SEQUENCE:{int(ev.get('sequence', 0))}",
+            f"DTSTART;VALUE=DATE:{inizio.strftime('%Y%m%d')}",
+            f"DTEND;VALUE=DATE:{(fine + _timedelta(days=1)).strftime('%Y%m%d')}",
+            f"SUMMARY:{_ics_testo(ev['titolo'])}",
+        ]
+        if ev.get("descrizione"):
+            righe.append(f"DESCRIPTION:{_ics_testo(ev['descrizione'])}")
+        righe.append("TRANSP:TRANSPARENT")
+        for trigger, messaggio in ev.get("promemoria", []):
+            righe += ["BEGIN:VALARM", f"TRIGGER:{trigger}", "ACTION:DISPLAY",
+                      f"DESCRIPTION:{_ics_testo(messaggio)}", "END:VALARM"]
+        righe.append("END:VEVENT")
+    righe.append("END:VCALENDAR")
+    return ("\r\n".join(_ics_piega(r) for r in righe) + "\r\n").encode("utf-8")
+
+
+def link_google_calendar(titolo, data_ev, descrizione=""):
+    """Link 'aggiungi a Google Calendar' con un clic (evento tutto il giorno)."""
+    params = {
+        "action": "TEMPLATE", "text": titolo,
+        "dates": f"{data_ev.strftime('%Y%m%d')}/{(data_ev + _timedelta(days=1)).strftime('%Y%m%d')}",
+        "details": descrizione,
+    }
+    return "https://calendar.google.com/calendar/render?" + urllib.parse.urlencode(params)
+
+
+def evento_da_voce(v):
+    righe_desc = [f"Categoria: {v['categoria']}", f"Origine: {ORIGINI_SCADENZA[v['origine']]}"]
+    if v["importo"] is not None:
+        righe_desc.append(f"Importo: € {v['importo']:,.2f}")
+    if v["note"]:
+        righe_desc.append(v["note"])
+    righe_desc.append("Promemoria creato con BrewDesk")
+    return {
+        "uid": f"brewdesk-scad-{v['origine']}-{v['ref_id']}@brewdesk",
+        "data": v["data"], "titolo": f"⏰ {v['titolo']}",
+        "descrizione": "\n".join(righe_desc),
+        "promemoria": [(ALLARME_3GG_PRIMA, "Scadenza tra 3 giorni"), (ALLARME_STESSO_GIORNO, "Scadenza oggi")],
+    }
+
+
+def calcola_fusti(litri, calo_perc, formato_l):
+    """Ritorna (fusti_pieni, resto_litri, litri_utili) dopo il calo stimato."""
+    utili = max(0.0, float(litri) * (1.0 - float(calo_perc) / 100.0))
+    if float(formato_l) <= 0:
+        return 0, 0.0, round(utili, 1)
+    n = int(_math.floor(utili / float(formato_l) + 1e-9))
+    resto = max(0.0, utili - n * float(formato_l))
+    return n, round(resto, 1), round(utili, 1)
+
+
+def eventi_da_piano(p):
+    seq = int(p["updated_at"].timestamp() // 60) if p.get("updated_at") else 0
+    eventi = []
+    base_desc = [f"Birra: {p['nome_birra']}"]
+    if p["stile"]:
+        base_desc.append(f"Stile: {p['stile']}")
+    base_desc.append(f"Litri stimati: {p['litri']:g} L")
+    if p["tank"]:
+        base_desc.append(f"Fermentatore: {p['tank']}")
+    if p["note"]:
+        base_desc.append(p["note"])
+    base_desc.append("Pianificato con BrewDesk")
+    stile_txt = f" ({p['stile']})" if p["stile"] else ""
+    if p["stato"] == "PIANIFICATA":
+        eventi.append({
+            "uid": f"brewdesk-cotta-{p['id']}-brassaggio@brewdesk",
+            "data": p["data_cotta"], "sequence": seq,
+            "titolo": f"🍺 Cotta: {p['nome_birra']}{stile_txt} – {p['litri']:g} L",
+            "descrizione": "\n".join(base_desc),
+            "promemoria": [(ALLARME_GIORNO_PRIMA, "Domani cotta in programma"), (ALLARME_STESSO_GIORNO, "Oggi cotta in programma")],
+        })
+    if p["stato"] in STATI_PIANO_ATTIVI:
+        n, resto, utili = calcola_fusti(p["litri"], p["calo"], p["formato"])
+        desc_conf = base_desc + [
+            f"Confezionamento previsto: {p['n_fusti'] or n} × {p['contenitore']} {p['formato']:g} L",
+            f"Litri confezionabili (calo {p['calo']:g}%): {utili:g} L",
+        ]
+        eventi.append({
+            "uid": f"brewdesk-cotta-{p['id']}-confezionamento@brewdesk",
+            "data": p["data_conf"], "sequence": seq,
+            "titolo": f"📦 Confezionamento: {p['nome_birra']} – {p['n_fusti'] or n} × {p['contenitore']} {p['formato']:g} L",
+            "descrizione": "\n".join(desc_conf),
+            "promemoria": [(ALLARME_GIORNO_PRIMA, "Domani confezionamento in programma"), (ALLARME_STESSO_GIORNO, "Oggi confezionamento in programma")],
+        })
+    return eventi
+
+
+def trova_conflitti_tank(piani, tank, d_inizio, d_fine, escludi_id=None):
+    if not tank:
+        return []
+    return [p for p in piani
+            if p["id"] != escludi_id and p["stato"] in STATI_PIANO_ATTIVI and p["tank"] == tank
+            and p["data_cotta"] and p["data_conf"]
+            and p["data_cotta"] <= d_fine and d_inizio <= p["data_conf"]]
+
+
+# --- Post-it HTML -------------------------------------------------------------
+CSS_POSTIT = """<style>
+.bd-postit{border-radius:4px 4px 14px 4px;padding:12px 14px 10px 14px;margin:6px 0 4px 0;min-height:110px;color:#1d1d1f;box-shadow:2px 4px 8px rgba(0,0,0,.22);font-size:.92rem;line-height:1.35;overflow-wrap:anywhere}
+.bd-postit .cat{font-size:.72rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;opacity:.75;margin-bottom:4px}
+.bd-postit .tit{font-weight:700;font-size:1rem;margin-bottom:3px}
+.bd-postit .bad{display:inline-block;margin-top:8px;padding:2px 9px;border-radius:10px;font-size:.75rem;font-weight:700;color:#fff}
+.bd-postit.fatto{opacity:.5}
+.bd-postit.fatto .tit,.bd-postit.fatto .txt{text-decoration:line-through}
+</style>"""
+
+
+def html_postit(n, oggi, indice=0):
+    cat = CATEGORIE_NOTE.get(n["categoria"], CATEGORIE_NOTE["Generale"])
+    data_n = _a_data(n["data_scadenza"])
+    completata = bool(n["completata"])
+    liv = livello_scadenza(None if completata else data_n, oggi)
+    bordo = liv["colore"] if liv["codice"] in ("SCADUTA", "OGGI", "URGENTE", "IMMINENTE") else cat["bordo"]
+    rot = "-0.5deg" if indice % 2 == 0 else "0.5deg"
+    classi = "bd-postit fatto" if completata else "bd-postit"
+    parti = [
+        f"<div class='{classi}' style='background:{cat['bg']};border-left:8px solid {bordo};transform:rotate({rot})'>",
+        f"<div class='cat'>{cat['emoji']} {_h(n['categoria'])}</div>",
+    ]
+    if n["titolo"]:
+        parti.append(f"<div class='tit'>{_h(n['titolo'])}</div>")
+    if n["testo"]:
+        parti.append(f"<div class='txt'>{_h(n['testo'])}</div>")
+    if data_n and completata:
+        parti.append(f"<span class='bad' style='background:#8A8A8A'>✔ completata · scadenza {data_n.strftime('%d/%m/%Y')}</span>")
+    elif data_n:
+        parti.append(f"<span class='bad' style='background:{liv['colore']}'>{liv['emoji']} {data_n.strftime('%d/%m/%Y')} · {liv['testo']}</span>")
+    parti.append("</div>")
+    return "".join(parti)
+
+
+# =========================================================================
+# RENDER: ANNOTAZIONI RAPIDE & AVVISI (HOME)
+# =========================================================================
+def render_home_annotazioni():
+    if not DB_EXTRA_OK:
+        st.info("Modulo annotazioni non disponibile: tabelle non inizializzate.")
+        return
+    oggi = oggi_it()
+    utente = st.session_state.get("utente_connesso", "")
+    st.markdown(CSS_POSTIT, unsafe_allow_html=True)
+    st.markdown("### 📌 Annotazioni Rapide & Avvisi")
+
+    dati = carica_home_dati()
+    note, voci, piani = dati["note"], dati["voci"], dati["piani"]
+
+    # ---- Avvisi: scadenze (bollette, accise, manutenzioni, note) e attivita' di cantina ----
+    scadute, imminenti = [], []
+    for v in voci:
+        if v["chiusa"]:
+            continue
+        liv = livello_scadenza(v["data"], oggi)
+        riga = f"{_md(v['titolo'])} _({v['data'].strftime('%d/%m')} · {testo_giorni(liv['giorni'])})_"
+        if liv["codice"] == "SCADUTA":
+            scadute.append((v["data"], riga))
+        elif liv["codice"] in ("OGGI", "URGENTE", "IMMINENTE"):
+            imminenti.append((v["data"], riga))
+    for p in piani:
+        if p["stato"] == "PIANIFICATA" and p["data_cotta"]:
+            gg = (p["data_cotta"] - oggi).days
+            riga = f"🍺 Cotta {_md(p['nome_birra'])} _({p['data_cotta'].strftime('%d/%m')} · {testo_giorni(gg)})_"
+            if gg < 0:
+                scadute.append((p["data_cotta"], riga + " — non ancora segnata come eseguita"))
+            elif gg <= SOGLIA_IMMINENTE_GG:
+                imminenti.append((p["data_cotta"], riga))
+        if p["stato"] in STATI_PIANO_ATTIVI and p["data_conf"]:
+            gg = (p["data_conf"] - oggi).days
+            riga = f"📦 Confezionamento {_md(p['nome_birra'])} _({p['data_conf'].strftime('%d/%m')} · {testo_giorni(gg)})_"
+            if gg < 0:
+                scadute.append((p["data_conf"], riga + " — in ritardo"))
+            elif gg <= SOGLIA_IMMINENTE_GG:
+                imminenti.append((p["data_conf"], riga))
+
+    def _elenco(lista, massimo=5):
+        righe = [r for _, r in sorted(lista, key=lambda x: x[0])]
+        testo = " · ".join(righe[:massimo])
+        if len(righe) > massimo:
+            testo += f" · … e altre {len(righe) - massimo}"
+        return testo
+
+    if scadute:
+        st.error(f"🔴 **{len(scadute)} scadenz{'a superata' if len(scadute) == 1 else 'e superate'}:** {_elenco(scadute)}")
+    if imminenti:
+        st.warning(f"🟠 **{len(imminenti)} in arrivo (entro {SOGLIA_IMMINENTE_GG} giorni):** {_elenco(imminenti)}")
+    if not scadute and not imminenti:
+        st.success(f"✅ Nessuna scadenza superata o in arrivo nei prossimi {SOGLIA_IMMINENTE_GG} giorni.")
+    st.caption("I dettagli e il registro completo sono nella scheda ⏰ Scadenze & Promemoria.")
+
+    # ---- Nuova nota ----
+    with st.expander("➕ Nuova nota rapida", expanded=False):
+        with st.form("ann_form_nuova", clear_on_submit=True):
+            f1, f2 = st.columns([1, 2])
+            with f1:
+                n_cat = st.selectbox("Categoria", list(CATEGORIE_NOTE.keys()), key="ann_cat_in")
+                n_ha_scad = st.checkbox("Ha una scadenza", key="ann_has_scad_in")
+                n_scad = st.date_input("Scadenza", value=oggi + _timedelta(days=7), key="ann_scad_in")
+            with f2:
+                n_titolo = st.text_input("Titolo (facoltativo)", max_chars=80, key="ann_tit_in")
+                n_testo = st.text_area("Nota", max_chars=600, height=110, key="ann_txt_in",
+                                       placeholder="es. Ordinare luppolo Citra 2 kg / Sostituire guarnizione valvola tank 3 / Dry hop dopo 5 giorni...")
+            if st.form_submit_button("📌 Appendi la nota", type="primary"):
+                if not (n_titolo.strip() or n_testo.strip()):
+                    st.error("Scrivi almeno un titolo o un testo.")
+                else:
+                    db_scrivi([(
+                        "INSERT INTO annotazioni (categoria, titolo, testo, data_scadenza, creato_da) VALUES (%s,%s,%s,%s,%s)",
+                        (n_cat, n_titolo.strip(), n_testo.strip(), n_scad if n_ha_scad else None, utente),
+                    )])
+                    st.rerun()
+
+    # ---- Filtri e bacheca ----
+    fc1, fc2 = st.columns([4, 1])
+    with fc1:
+        filtro_cat = st.radio("Categoria", ["Tutte"] + list(CATEGORIE_NOTE.keys()), horizontal=True, key="ann_filtro_cat")
+    with fc2:
+        mostra_fatte = st.checkbox("Mostra completate", key="ann_mostra_fatte")
+
+    elenco = list(note)
+    if mostra_fatte:
+        elenco += db_leggi(SQL_NOTE_COMPLETATE)
+    if filtro_cat != "Tutte":
+        elenco = [n for n in elenco if n["categoria"] == filtro_cat]
+
+    if not elenco:
+        st.info("Nessuna nota in bacheca. Aggiungine una con ➕ Nuova nota rapida.")
+        return
+
+    MAX_NOTE = 60
+    if len(elenco) > MAX_NOTE:
+        st.caption(f"Mostrate le prime {MAX_NOTE} note su {len(elenco)} (ordinate per scadenza).")
+    colonne = st.columns(3)
+    for i, n in enumerate(elenco[:MAX_NOTE]):
+        with colonne[i % 3]:
+            st.markdown(html_postit(n, oggi, i), unsafe_allow_html=True)
+            b1, b2, _sp = st.columns([1, 1, 2])
+            if n["completata"]:
+                if b1.button("↩️", key=f"ann_riapri_{n['id']}", help="Riapri la nota"):
+                    db_scrivi([("UPDATE annotazioni SET completata=FALSE WHERE id=%s", (n["id"],))])
+                    st.rerun()
+            else:
+                if b1.button("✅", key=f"ann_ok_{n['id']}", help="Segna come fatta"):
+                    db_scrivi([("UPDATE annotazioni SET completata=TRUE WHERE id=%s", (n["id"],))])
+                    st.rerun()
+            if b2.button("🗑️", key=f"ann_del_{n['id']}", help="Elimina la nota"):
+                db_scrivi([("DELETE FROM annotazioni WHERE id=%s", (n["id"],))])
+                st.rerun()
+
+
+# =========================================================================
+# RENDER: TABELLA SCADENZE & PROMEMORIA
+# =========================================================================
+def render_tab_scadenze():
+    if not DB_EXTRA_OK:
+        st.info("Modulo scadenze non disponibile: tabelle non inizializzate.")
+        return
+    oggi = oggi_it()
+    utente = st.session_state.get("utente_connesso", "")
+
+    st.subheader("⏰ Scadenze & Promemoria")
+    st.caption(
+        "Registro unico: promemoria inseriti qui (manutenzioni, licenze, fornitori…) + bollette non pagate "
+        "(da 💡 Bollette & Costi Fissi) + scadenze accise + note rapide con scadenza (dalla Home)."
+    )
+
+    mostra_chiuse = st.checkbox("Mostra anche i promemoria già completati", key="scd_mostra_chiuse")
+    tutte = carica_scadenze(includi_chiuse=mostra_chiuse)
+    aperte = [v for v in tutte if not v["chiusa"]]
+
+    n_scadute = sum(1 for v in aperte if livello_scadenza(v["data"], oggi)["codice"] == "SCADUTA")
+    n_urgenti = sum(1 for v in aperte if livello_scadenza(v["data"], oggi)["codice"] in ("OGGI", "URGENTE"))
+    n_imminenti = sum(1 for v in aperte if livello_scadenza(v["data"], oggi)["codice"] == "IMMINENTE")
+    tot_importi = sum(v["importo"] for v in aperte if v["importo"])
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("🔴 Scadute", n_scadute)
+    m2.metric(f"🟠 Urgenti (≤ {SOGLIA_URGENTE_GG} gg)", n_urgenti)
+    m3.metric(f"🟡 In arrivo (≤ {SOGLIA_IMMINENTE_GG} gg)", n_imminenti)
+    m4.metric("💶 Importi aperti", f"€ {tot_importi:,.2f}")
+
+    # ---- Nuovo promemoria ----
+    with st.expander("➕ Nuova scadenza / promemoria", expanded=not tutte):
+        with st.form("scd_form_nuova", clear_on_submit=True):
+            g1, g2, g3 = st.columns(3)
+            with g1:
+                s_titolo = st.text_input("Cosa scade? *", max_chars=120, key="scd_titolo_in",
+                                         placeholder="es. Revisione caldaia / Taratura manometri / Rinnovo licenza UTF")
+                s_cat = st.selectbox("Categoria", CATEGORIE_SCADENZE, key="scd_cat_in")
+            with g2:
+                s_data = st.date_input("Data scadenza", value=oggi + _timedelta(days=30), key="scd_data_in")
+                s_ric = st.selectbox("Si ripete?", list(RICORRENZE.keys()), key="scd_ric_in",
+                                     help="Quando la segni come completata, viene creata la scadenza successiva.")
+            with g3:
+                s_importo = st.number_input("Importo previsto (€, 0 = nessuno)", min_value=0.0, value=0.0, step=10.0, key="scd_imp_in")
+                s_note = st.text_input("Note", max_chars=200, key="scd_note_in")
+            if st.form_submit_button("💾 Salva scadenza", type="primary"):
+                if not s_titolo.strip():
+                    st.error("Indica cosa scade.")
+                else:
+                    db_scrivi([(
+                        "INSERT INTO promemoria_scadenze (titolo, categoria, data_scadenza, importo, ricorrenza, note, creato_da) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                        (s_titolo.strip(), s_cat, s_data, s_importo if s_importo > 0 else None, s_ric, s_note.strip(), utente),
+                    )])
+                    st.rerun()
+
+    if not tutte:
+        st.info("Nessuna scadenza registrata. Le bollette non pagate e le note con scadenza compariranno qui automaticamente.")
+        return
+
+    # ---- Filtri ----
+    cat_presenti = sorted({v["categoria"] for v in tutte})
+    fl1, fl2 = st.columns(2)
+    with fl1:
+        f_cat = st.multiselect("Categorie", cat_presenti, default=cat_presenti, key="scd_f_cat")
+    with fl2:
+        f_orizz = st.selectbox("Orizzonte", ["Tutte", "Scadute + prossimi 7 giorni", "Scadute + prossimi 30 giorni", "Solo scadute"], key="scd_f_orizz")
+
+    visibili = []
+    for v in tutte:
+        if v["categoria"] not in f_cat:
+            continue
+        if not v["chiusa"]:
+            gg = livello_scadenza(v["data"], oggi)["giorni"]
+            if f_orizz == "Scadute + prossimi 7 giorni" and gg > 7:
+                continue
+            if f_orizz == "Scadute + prossimi 30 giorni" and gg > 30:
+                continue
+            if f_orizz == "Solo scadute" and gg >= 0:
+                continue
+        elif f_orizz != "Tutte":
+            continue
+        visibili.append(v)
+
+    if not visibili:
+        st.info("Nessuna voce con i filtri selezionati.")
+        return
+
+    righe = []
+    for v in visibili:
+        liv = livello_scadenza(v["data"], oggi)
+        righe.append({
+            "Stato": "✅" if v["chiusa"] else liv["emoji"],
+            "Scadenza": v["data"].strftime("%d/%m/%Y"),
+            "Giorni": None if v["chiusa"] else liv["giorni"],
+            "Voce": v["titolo"],
+            "Categoria": v["categoria"],
+            "Origine": ORIGINI_SCADENZA[v["origine"]],
+            "Importo (€)": v["importo"],
+            "Ricorrenza": v["ricorrenza"] if v["origine"] == "manuale" else "-",
+            "Note": v["note"],
+        })
+    st.dataframe(pd.DataFrame(righe), use_container_width=True, hide_index=True)
+
+    # ---- Azioni sulla voce selezionata ----
+    st.markdown("#### ⚙️ Gestisci una voce")
+
+    def _etichetta(i):
+        v = visibili[i]
+        icona = "✅" if v["chiusa"] else livello_scadenza(v["data"], oggi)["emoji"]
+        return f"{icona} {v['data'].strftime('%d/%m/%Y')} — {v['titolo']}  [{ORIGINI_SCADENZA[v['origine']]}]"
+
+    idx = st.selectbox("Seleziona", list(range(len(visibili))), format_func=_etichetta, key="scd_sel")
+    v = visibili[idx]
+    chiave = f"{v['origine']}_{v['ref_id']}"
+    a1, a2, a3 = st.columns(3)
+    with a1:
+        if not v["chiusa"]:
+            etichetta_ok = "✅ Segna come pagata" if v["origine"] in ("bolletta", "accise") else "✅ Segna come completata"
+            if st.button(etichetta_ok, key=f"scd_ok_{chiave}", type="primary"):
+                completa_voce_scadenza(v)
+                st.rerun()
+        if v["origine"] == "manuale":
+            if st.button("🗑️ Elimina", key=f"scd_del_{chiave}"):
+                db_scrivi([("DELETE FROM promemoria_scadenze WHERE id=%s", (v["ref_id"],))])
+                st.rerun()
+    with a2:
+        if v["origine"] == "manuale" and not v["chiusa"]:
+            nuova = st.date_input("Sposta la scadenza al", value=v["data"], key=f"scd_newdate_{chiave}")
+            if st.button("📆 Aggiorna data", key=f"scd_move_{chiave}"):
+                db_scrivi([("UPDATE promemoria_scadenze SET data_scadenza=%s WHERE id=%s", (nuova, v["ref_id"]))])
+                st.rerun()
+        elif v["origine"] == "bolletta":
+            st.caption("🔗 Collegata a 💡 Bollette & Costi Fissi: segnarla pagata qui la aggiorna anche lì.")
+        elif v["origine"] == "accise":
+            st.caption("🔗 Collegata alla tabella scadenze accise.")
+        elif v["origine"] == "nota":
+            st.caption("🔗 Nota rapida della Home: completarla qui la toglie anche dalla bacheca.")
+    with a3:
+        st.download_button("📅 Scarica .ics di questa scadenza", data=genera_ics([evento_da_voce(v)], "BrewDesk – Scadenza"),
+                           file_name=f"scadenza_{chiave}.ics", mime="text/calendar", key=f"scd_ics_{chiave}")
+        st.markdown(f"[📆 Aggiungi a Google Calendar]({link_google_calendar(v['titolo'], v['data'], v['note'])})")
+
+    st.divider()
+    future = [v for v in aperte if v["data"] >= oggi]
+    if future:
+        st.download_button(
+            f"📅 Esporta tutte le scadenze aperte da oggi (.ics) — {len(future)} eventi",
+            data=genera_ics([evento_da_voce(x) for x in future], "BrewDesk – Scadenze"),
+            file_name="brewdesk_scadenze.ics", mime="text/calendar", key="scd_ics_tutte",
+        )
+        st.caption("iPhone/iPad: tocca il file scaricato → «Aggiungi tutto». Google Calendar: calendar.google.com → Impostazioni → Importa/Esporta → Importa.")
+
+
+# =========================================================================
+# RENDER: PIANIFICATORE COTTE (con export .ics)
+# =========================================================================
+def render_tab_pianificatore():
+    if not DB_EXTRA_OK:
+        st.info("Modulo pianificatore non disponibile: tabelle non inizializzate.")
+        return
+    oggi = oggi_it()
+    utente = st.session_state.get("utente_connesso", "")
+
+    st.subheader("🗓️ Pianificatore Cotte")
+    st.caption("Programma le cotte (stile, litri, data) e il confezionamento in fusti PolyKeg/Dolium; esporta tutto nel calendario del telefono.")
+
+    piani = carica_piani()
+    ricette = db_leggi("SELECT id, nome_ricetta, stile_birra, litri_previsti FROM ricette ORDER BY nome_ricetta ASC")
+    tanks = db_leggi("SELECT numero_tank, nome_tank, capacita_lt FROM configurazione_fermentatori WHERE COALESCE(stato_attivo, TRUE) ORDER BY numero_tank ASC")
+    cap_tank = {t["nome_tank"]: float(t["capacita_lt"] or 0) for t in tanks}
+
+    # ---- Riepilogo ----
+    attive = [p for p in piani if p["stato"] in STATI_PIANO_ATTIVI]
+    prossime_cotte = sorted([p for p in piani if p["stato"] == "PIANIFICATA" and p["data_cotta"] >= oggi], key=lambda p: p["data_cotta"])
+    prossime_conf = sorted([p for p in attive if p["data_conf"] >= oggi], key=lambda p: p["data_conf"])
+    litri_30 = sum(p["litri"] for p in piani if p["stato"] == "PIANIFICATA" and 0 <= (p["data_cotta"] - oggi).days <= 30)
+    r1, r2, r3 = st.columns(3)
+    r1.metric("Litri in cotta (prossimi 30 gg)", f"{litri_30:,.0f} L")
+    if prossime_cotte:
+        pc = prossime_cotte[0]
+        r2.metric("Prossima cotta", pc["data_cotta"].strftime("%d/%m"), delta=f"{pc['nome_birra']} · {testo_giorni((pc['data_cotta'] - oggi).days)}", delta_color="off")
+    else:
+        r2.metric("Prossima cotta", "—")
+    if prossime_conf:
+        pf = prossime_conf[0]
+        r3.metric("Prossimo confezionamento", pf["data_conf"].strftime("%d/%m"), delta=f"{pf['nome_birra']} · {testo_giorni((pf['data_conf'] - oggi).days)}", delta_color="off")
+    else:
+        r3.metric("Prossimo confezionamento", "—")
+
+    # ---- Nuova pianificazione ----
+    with st.expander("➕ Pianifica una nuova cotta", expanded=not piani):
+        ver = st.session_state.get("plan_ver", 0)
+        opz_ric = ["— Nessuna (inserimento libero) —"] + [f"{r['nome_ricetta']} ({r['stile_birra']})" for r in ricette]
+        sel_ric = st.selectbox("Parti da una ricetta salvata (facoltativo)", list(range(len(opz_ric))),
+                               format_func=lambda i: opz_ric[i], key=f"plan_ric_{ver}")
+        ric = ricette[sel_ric - 1] if sel_ric > 0 else None
+        k = f"{ver}_{ric['id'] if ric else 0}"
+
+        p1, p2, p3 = st.columns(3)
+        with p1:
+            nome = st.text_input("Nome birra / lotto *", value=ric["nome_ricetta"] if ric else "", key=f"plan_nome_{k}", max_chars=80)
+        with p2:
+            stile = st.text_input("Stile", value=ric["stile_birra"] if ric else "", key=f"plan_stile_{k}", max_chars=60)
+        with p3:
+            litri_def = max(10.0, float(ric["litri_previsti"] or 500.0)) if ric else 500.0
+            litri = st.number_input("Litri stimati (mosto)", min_value=10.0, step=50.0, value=litri_def, key=f"plan_litri_{k}")
+
+        q1, q2, q3 = st.columns(3)
+        with q1:
+            data_cotta = st.date_input("Data cotta", value=oggi + _timedelta(days=1), key=f"plan_dc_{ver}")
+        with q2:
+            giorni_mat = st.number_input("Giorni di maturazione stimati", min_value=1, max_value=180, value=14, step=1, key=f"plan_gg_{ver}")
+        with q3:
+            manuale = st.checkbox("Imposto io la data di confezionamento", key=f"plan_man_{ver}")
+        data_conf_auto = data_cotta + _timedelta(days=int(giorni_mat))
+        if manuale:
+            data_conf = st.date_input("Data prevista confezionamento", value=data_conf_auto, key=f"plan_dcf_{ver}_{data_cotta}_{giorni_mat}")
+        else:
+            data_conf = data_conf_auto
+            st.caption(f"📦 Confezionamento previsto: **{data_conf.strftime('%d/%m/%Y')}** (cotta + {int(giorni_mat)} giorni)")
+
+        s1, s2, s3, s4 = st.columns(4)
+        with s1:
+            contenitore = st.selectbox("Contenitore", TIPI_CONTENITORE, key=f"plan_cont_{ver}")
+        with s2:
+            formato = st.selectbox("Formato fusto (L)", FORMATI_FUSTO_L, index=FORMATI_FUSTO_L.index(20), key=f"plan_fmt_{ver}")
+        with s3:
+            calo = st.number_input("Calo stimato (%)", min_value=0.0, max_value=40.0, value=8.0, step=1.0, key=f"plan_calo_{ver}",
+                                   help="Stima delle perdite tra fermentatore e fusto (trub, travaso). Modificala in base alla tua esperienza.")
+        with s4:
+            tank = st.selectbox("Fermentatore", ["— non assegnato —"] + [t["nome_tank"] for t in tanks], key=f"plan_tank_{ver}")
+        tank_val = "" if tank.startswith("—") else tank
+
+        n_pieni, resto, utili = calcola_fusti(litri, calo, formato)
+        x1, x2, x3 = st.columns(3)
+        x1.metric("Litri confezionabili", f"{utili:,.1f} L")
+        x2.metric(f"{contenitore} da {formato} L (pieni)", f"{n_pieni}")
+        x3.metric("Resto", f"{resto:,.1f} L")
+
+        note_piano = st.text_input("Note (luppolatura, dry hop, lotto…)", key=f"plan_note_{ver}", max_chars=200)
+
+        data_ok = data_conf >= data_cotta
+        if not data_ok:
+            st.error("La data di confezionamento non può precedere la data di cotta.")
+        if data_cotta < oggi:
+            st.info("La data di cotta è nel passato: ok se stai registrando una cotta già fatta.")
+        if tank_val and cap_tank.get(tank_val, 0) and litri > cap_tank[tank_val]:
+            st.warning(f"⚠️ {litri:,.0f} L superano la capacità di «{tank_val}» ({cap_tank[tank_val]:,.0f} L).")
+        if data_ok:
+            for cf in trova_conflitti_tank(piani, tank_val, data_cotta, data_conf):
+                st.warning(f"⚠️ «{tank_val}» risulta già occupato da {cf['nome_birra']} "
+                           f"({cf['data_cotta'].strftime('%d/%m')} → {cf['data_conf'].strftime('%d/%m')}).")
+
+        if st.button("💾 Salva pianificazione", type="primary", key=f"plan_save_{ver}", disabled=not data_ok):
+            if not nome.strip():
+                st.error("Inserisci il nome della birra o del lotto.")
+            else:
+                db_scrivi([(
+                    "INSERT INTO pianificazione_cotte (nome_birra, stile, litri_stimati, data_cotta, data_confezionamento, "
+                    "contenitore, formato_litri, calo_stimato_perc, n_fusti, tank, note, creato_da) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (nome.strip(), stile.strip(), litri, data_cotta, data_conf, contenitore, float(formato), calo,
+                     n_pieni, tank_val, note_piano.strip(), utente),
+                )])
+                st.session_state["plan_ver"] = ver + 1
+                st.rerun()
+
+    if not piani:
+        st.info("Nessuna cotta pianificata.")
+        return
+
+    # ---- Programma ----
+    st.markdown("#### 📆 Programma")
+    vista = st.radio("Mostra", ["Attive", "Tutte"], horizontal=True, key="plan_vista")
+    elenco = [p for p in piani if vista == "Tutte" or p["stato"] in STATI_PIANO_ATTIVI]
+    if not elenco:
+        st.info("Nessuna cotta attiva. Seleziona «Tutte» per vedere anche quelle concluse o annullate.")
+    else:
+        righe = []
+        for p in elenco:
+            righe.append({
+                "Stato": f"{EMOJI_STATO_PIANO.get(p['stato'], '')} {p['stato'].title()}",
+                "Birra": p["nome_birra"], "Stile": p["stile"], "Litri": p["litri"],
+                "Cotta": p["data_cotta"].strftime("%d/%m/%Y"),
+                "Confezionamento": p["data_conf"].strftime("%d/%m/%Y"),
+                "Fusti": f"{p['n_fusti']} × {p['contenitore']} {p['formato']:g} L",
+                "Fermentatore": p["tank"] or "-", "Note": p["note"],
+            })
+        st.dataframe(pd.DataFrame(righe), use_container_width=True, hide_index=True)
+
+        # ---- Export calendario completo ----
+        eventi_tutti = [e for p in attive for e in eventi_da_piano(p)]
+        if eventi_tutti:
+            st.download_button(
+                f"📅 Scarica calendario cotte (.ics) — {len(eventi_tutti)} eventi",
+                data=genera_ics(eventi_tutti, "BrewDesk – Cotte e confezionamento"),
+                file_name="brewdesk_cotte.ics", mime="text/calendar", type="primary", key="plan_ics_tutti",
+            )
+            st.caption(
+                "iPhone/iPad: tocca il file scaricato → «Aggiungi tutto». Google Calendar: calendar.google.com → Impostazioni → "
+                "Importa/Esporta → Importa (oppure usa il link «Google Calendar» sulla singola attività qui sotto). "
+                "Gli eventi hanno un identificativo stabile: reimportando dopo una modifica la maggior parte dei calendari aggiorna "
+                "gli eventi invece di duplicarli. Google applica le sue notifiche predefinite, iOS usa quelle incluse nel file."
+            )
+
+        # ---- Gestione singola cotta ----
+        st.markdown("#### ⚙️ Gestisci una cotta")
+        ids = [p["id"] for p in elenco]
+        mappa = {p["id"]: p for p in elenco}
+        sel_id = st.selectbox(
+            "Seleziona", ids, key="plan_sel",
+            format_func=lambda i: f"{EMOJI_STATO_PIANO.get(mappa[i]['stato'], '')} {mappa[i]['data_cotta'].strftime('%d/%m/%Y')} — {mappa[i]['nome_birra']} ({mappa[i]['litri']:g} L)",
+        )
+        p = mappa[sel_id]
+        ev_p = eventi_da_piano(p)
+        e1, e2 = st.columns(2)
+        with e1:
+            if ev_p:
+                st.download_button("📅 Scarica .ics di questa cotta", data=genera_ics(ev_p, f"BrewDesk – {p['nome_birra']}"),
+                                   file_name=f"cotta_{p['id']}.ics", mime="text/calendar", key=f"plan_ics_{p['id']}")
+        with e2:
+            for e in ev_p:
+                st.markdown(f"[📆 Google Calendar: {_md(e['titolo'])}]({link_google_calendar(e['titolo'], e['data'], e['descrizione'])})")
+
+        with st.form(f"plan_form_edit_{p['id']}"):
+            h1, h2, h3 = st.columns(3)
+            with h1:
+                ed_stato = st.selectbox("Stato", STATI_PIANO, index=STATI_PIANO.index(p["stato"]) if p["stato"] in STATI_PIANO else 0, key=f"plan_ed_stato_{p['id']}")
+                ed_litri = st.number_input("Litri stimati", min_value=10.0, step=50.0, value=max(10.0, p["litri"]), key=f"plan_ed_litri_{p['id']}")
+            with h2:
+                ed_cotta = st.date_input("Data cotta", value=p["data_cotta"], key=f"plan_ed_dc_{p['id']}")
+                ed_conf = st.date_input("Data confezionamento", value=p["data_conf"], key=f"plan_ed_dcf_{p['id']}")
+            with h3:
+                ed_note = st.text_input("Note", value=p["note"], key=f"plan_ed_note_{p['id']}", max_chars=200)
+            salva_mod = st.form_submit_button("💾 Salva modifiche", type="primary")
+        if salva_mod:
+            if ed_conf < ed_cotta:
+                st.error("La data di confezionamento non può precedere la data di cotta.")
+            else:
+                n_new, _r, _u = calcola_fusti(ed_litri, p["calo"], p["formato"])
+                db_scrivi([(
+                    "UPDATE pianificazione_cotte SET stato=%s, litri_stimati=%s, data_cotta=%s, data_confezionamento=%s, "
+                    "note=%s, n_fusti=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s",
+                    (ed_stato, ed_litri, ed_cotta, ed_conf, ed_note.strip(), n_new, p["id"]),
+                )])
+                st.rerun()
+        for cf in trova_conflitti_tank(piani, p["tank"], p["data_cotta"], p["data_conf"], escludi_id=p["id"]):
+            st.warning(f"⚠️ «{p['tank']}» è occupato anche da {cf['nome_birra']} ({cf['data_cotta'].strftime('%d/%m')} → {cf['data_conf'].strftime('%d/%m')}).")
+
+        conferma = st.checkbox("Confermo di voler eliminare questa pianificazione", key=f"plan_delconf_{p['id']}")
+        if st.button("🗑️ Elimina pianificazione", key=f"plan_del_{p['id']}", disabled=not conferma):
+            db_scrivi([("DELETE FROM pianificazione_cotte WHERE id=%s", (p["id"],))])
+            st.rerun()
+        st.caption("Dopo la cotta reale, registrala in ⚗️ Cotta & Sanificazione CIP (qui puoi solo cambiare lo stato in «In fermentazione» / «Confezionata»).")
+
 # --- HEADER CRUSCOTTO PRINCIPALE ---
 col_head1, col_head2 = st.columns([1.2, 8])
 with col_head1:
@@ -882,8 +1903,16 @@ c3.metric("Lievito Residuo", f"{lievito:.3f} kg")
 
 st.divider()
 
+# --- NUOVO: ANNOTAZIONI RAPIDE & AVVISI (HOME/DASHBOARD) ---
+try:
+    render_home_annotazioni()
+except Exception as _e_home_ann:
+    st.warning(f"Sezione Annotazioni non disponibile: {_e_home_ann}")
+
+st.divider()
+
 # --- DEFINIZIONE SCHEDE APPLICATIVE ---
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs([
     "⚗️ Cotta & Sanificazione CIP",
     "📡 Cantina IoT & Multi-Protocollo",
     "🍻 Fusti & Vuoti nei Pub",
@@ -895,6 +1924,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
     "🚚 Vendite (XML & Manuale)",
     "🏛️ Giacenze Magazzino",
     "📑 Report 31/12 & Dogane",
+    "⏰ Scadenze & Promemoria",
+    "🗓️ Pianificatore Cotte",
 ])
 
 # =========================================================================
@@ -2338,3 +3369,22 @@ with tab11:
         file_name="Prospetto_Rimanenze_31_12_Commercialista.pdf",
         mime="application/pdf"
     )
+
+
+# =========================================================================
+# TAB 12: SCADENZE & PROMEMORIA (NUOVO)
+# =========================================================================
+with tab12:
+    try:
+        render_tab_scadenze()
+    except Exception as _e_tab12:
+        st.error(f"Errore nella scheda Scadenze & Promemoria: {_e_tab12}")
+
+# =========================================================================
+# TAB 13: PIANIFICATORE COTTE CON EXPORT .ICS (NUOVO)
+# =========================================================================
+with tab13:
+    try:
+        render_tab_pianificatore()
+    except Exception as _e_tab13:
+        st.error(f"Errore nel Pianificatore Cotte: {_e_tab13}")

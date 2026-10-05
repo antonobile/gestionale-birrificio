@@ -2,6 +2,9 @@ import io
 import os
 import re
 import hashlib
+import hmac
+import secrets
+import base64
 import json
 import urllib.parse
 from datetime import datetime
@@ -43,6 +46,119 @@ CF_AZIENDA = "NBLLGU54L09F636V"
 RAGIONE_AZIENDA = "Birrificio Nobile"
 ALIQUOTA_ACCISA_PLATO = 1.490
 
+# --- SICUREZZA MULTI-TENANT & CREDENZIALI ---------------------------------
+# Ogni azienda viene identificata dalla propria Partita IVA. Le tabelle operative
+# sono protette da PostgreSQL Row Level Security (RLS): le query esistenti non
+# devono quindi ricordarsi manualmente di aggiungere WHERE azienda_id=... .
+# Il tenant viene impostato sulla connessione PostgreSQL in base alla sessione.
+
+BASE_TENANT_TABLES = [
+    "materie_prime",
+    "imballaggi",
+    "registro_mosto",
+    "birra_condizionata",
+    "scadenze_accise",
+    "ricette",
+    "tracciamento_fusti",
+    "costi_fissi_utenze",
+    "fatture_utenze",
+    "configurazione_fermentatori",
+    "telemetria_fermentatori",
+]
+EXTRA_TENANT_TABLES = [
+    "annotazioni",
+    "promemoria_scadenze",
+    "pianificazione_cotte",
+]
+ALL_TENANT_TABLES = BASE_TENANT_TABLES + EXTRA_TENANT_TABLES
+
+PBKDF2_ITERATIONS = 310_000
+
+
+def hash_password(password: str) -> str:
+    """Hash password con PBKDF2-HMAC-SHA256 e salt casuale.
+
+    Formato: pbkdf2_sha256$iterazioni$salt_b64$digest_b64
+    Non richiede dipendenze esterne ed è adatto al login applicativo.
+    """
+    if not password:
+        raise ValueError("La password non può essere vuota.")
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt, PBKDF2_ITERATIONS
+    )
+    return "pbkdf2_sha256${}${}${}".format(
+        PBKDF2_ITERATIONS,
+        base64.urlsafe_b64encode(salt).decode("ascii").rstrip("="),
+        base64.urlsafe_b64encode(digest).decode("ascii").rstrip("="),
+    )
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    """Verifica un hash PBKDF2; supporta temporaneamente anche il vecchio plaintext."""
+    if not password or not stored_hash:
+        return False
+    if not stored_hash.startswith("pbkdf2_sha256$"):
+        # Compatibilità una tantum con i vecchi account: init_db li converte.
+        return hmac.compare_digest(password, stored_hash)
+    try:
+        _, iterations, salt_b64, digest_b64 = stored_hash.split("$", 3)
+        iterations = int(iterations)
+        salt = base64.urlsafe_b64decode(salt_b64 + "=" * (-len(salt_b64) % 4))
+        expected = base64.urlsafe_b64decode(digest_b64 + "=" * (-len(digest_b64) % 4))
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+        return hmac.compare_digest(actual, expected)
+    except Exception:
+        return False
+
+
+def _tenant_from_session() -> str:
+    return str(st.session_state.get("azienda_id") or "").strip()
+
+
+def _set_connection_tenant(conn, tenant_id: str | None):
+    """Imposta il tenant sulla singola connessione presa dal pool."""
+    with conn.cursor() as c:
+        if tenant_id:
+            c.execute("SELECT set_config('app.azienda_id', %s, false);", (tenant_id,))
+        else:
+            c.execute("RESET app.azienda_id;")
+
+
+def _configure_tenant_security(cursor, tables, legacy_tenant):
+    """Aggiunge azienda_id, migra i record legacy e abilita RLS sulle tabelle operative."""
+    for table in tables:
+        cursor.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS azienda_id TEXT;")
+        cursor.execute(
+            f"UPDATE {table} SET azienda_id=%s WHERE azienda_id IS NULL OR azienda_id='';",
+            (legacy_tenant,),
+        )
+        cursor.execute(
+            f"ALTER TABLE {table} ALTER COLUMN azienda_id SET DEFAULT current_setting('app.azienda_id', true);"
+        )
+        cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_azienda_id ON {table}(azienda_id);")
+        cursor.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;")
+        cursor.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY;")
+        policy = f"brewdesk_tenant_{table}"
+        cursor.execute(f"DROP POLICY IF EXISTS {policy} ON {table};")
+        cursor.execute(
+            f"""CREATE POLICY {policy} ON {table}
+                USING (azienda_id = current_setting('app.azienda_id', true))
+                WITH CHECK (azienda_id = current_setting('app.azienda_id', true));"""
+        )
+
+
+def _migrate_legacy_passwords(cursor):
+    """Converte gli eventuali account storici con password in chiaro in PBKDF2."""
+    cursor.execute("SELECT id, password FROM utenti;")
+    for row in cursor.fetchall():
+        user_id, stored = row
+        if stored and not str(stored).startswith("pbkdf2_sha256$"):
+            cursor.execute(
+                "UPDATE utenti SET password=%s WHERE id=%s;",
+                (hash_password(str(stored)), user_id),
+            )
+
 # --- GESTIONE POOL CONNESSIONI DUAL-MODE (GCP + STREAMLIT) ---
 @st.cache_resource
 def get_db_pool():
@@ -60,12 +176,33 @@ class DatabaseConnection:
     def __enter__(self):
         self.pool = get_db_pool()
         self.conn = self.pool.getconn()
+        try:
+            _set_connection_tenant(self.conn, _tenant_from_session())
+        except Exception:
+            self.pool.putconn(self.conn)
+            raise
         return self.conn
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_type is not None:
-            self.conn.rollback()
-        self.pool.putconn(self.conn)
+        try:
+            if exc_type is not None:
+                self.conn.rollback()
+            # Chiude eventuali transazioni lasciate aperte da SELECT. Le scritture
+            # esistenti fanno già commit esplicito; un commit ripetuto è innocuo.
+            else:
+                self.conn.commit()
+        finally:
+            try:
+                self.conn.rollback()
+                with self.conn.cursor() as c:
+                    c.execute("RESET app.azienda_id;")
+                self.conn.commit()
+            except Exception:
+                try:
+                    self.conn.rollback()
+                except Exception:
+                    pass
+            self.pool.putconn(self.conn)
 
 def get_db_connection():
     return DatabaseConnection()
@@ -269,12 +406,35 @@ def init_db():
                 );
             """)
 
-            c.execute("SELECT COUNT(*) FROM utenti;")
-            if c.fetchone()[0] == 0:
-                c.execute("""
-                    INSERT INTO utenti (username, password, ragione_sociale, piva)
-                    VALUES ('admin', 'BirraNobile2026!', 'Birrificio Nobile', '01822710628');
-                """)
+            # Nessun amministratore/password hardcoded nel sorgente.
+            # Gli account esistenti vengono convertiti automaticamente a PBKDF2.
+            _migrate_legacy_passwords(c)
+            c.execute("ALTER TABLE utenti ADD COLUMN IF NOT EXISTS azienda_id TEXT;")
+            c.execute(
+                "UPDATE utenti SET azienda_id=COALESCE(NULLIF(piva, ''), %s) WHERE azienda_id IS NULL OR azienda_id='';",
+                (PIVA_AZIENDA,),
+            )
+            c.execute("CREATE INDEX IF NOT EXISTS idx_utenti_azienda_id ON utenti(azienda_id);")
+
+            # Il database storico era single-tenant: tutti i dati già presenti
+            # appartengono all'azienda originaria. Da questo momento ogni nuovo
+            # record prende automaticamente il tenant della sessione.
+            c.execute("SELECT set_config('app.azienda_id', %s, false);", (PIVA_AZIENDA,))
+            _configure_tenant_security(c, BASE_TENANT_TABLES, PIVA_AZIENDA)
+
+            # Corregge il vecchio bug: il PrezzoUnitario delle fatture di vendita
+            # non è un costo di produzione. I vecchi scarichi palesemente anomali
+            # (>20 €/L) vengono riallineati al costo medio dei carichi esistenti.
+            c.execute("""
+                UPDATE birra_condizionata sc
+                SET costo_produzione_litro = COALESCE((
+                    SELECT SUM(car.litri_totali * car.costo_produzione_litro)
+                           / NULLIF(SUM(car.litri_totali), 0)
+                    FROM birra_condizionata car
+                    WHERE car.tipo='CARICO' AND car.litri_totali > 0
+                ), 1.10)
+                WHERE sc.tipo='SCARICO' AND COALESCE(sc.costo_produzione_litro, 0) > 20;
+            """)
 
             # AGGIUNTE AUTOMATICHE COLONNE MANCANTI
             c.execute("ALTER TABLE registro_mosto ADD COLUMN IF NOT EXISTS data_preventiva TEXT DEFAULT '';")
@@ -305,10 +465,13 @@ def init_db():
 
 init_db()
 
-# --- PROTEZIONE ACCESSO & REGISTRAZIONE AZIENDE ---
+# --- PROTEZIONE ACCESSO & REGISTRAZIONE AZIENDE ---------------------------
 if "autenticato" not in st.session_state:
     st.session_state["autenticato"] = False
-    st.session_state["utente_connesso"] = ""
+st.session_state.setdefault("utente_connesso", "")
+st.session_state.setdefault("azienda_id", "")
+st.session_state.setdefault("ragione_sociale", "")
+st.session_state.setdefault("piva_azienda", "")
 
 if not st.session_state["autenticato"]:
     col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
@@ -316,20 +479,37 @@ if not st.session_state["autenticato"]:
         if os.path.exists(LOGO_FILENAME):
             st.image(LOGO_FILENAME, width=120)
         st.title("🔒 BrewDesk — Accesso Piattaforma Pro")
-        
+
+        with get_db_connection() as conn:
+            with conn.cursor() as c:
+                c.execute("SELECT COUNT(*) FROM utenti;")
+                utenti_presenti = int(c.fetchone()[0] or 0)
+
+        if utenti_presenti == 0:
+            st.info("Prima configurazione: crea il primo account aziendale. Non esiste alcun amministratore preimpostato.")
+
         tab_log_1, tab_log_2 = st.tabs(["🔑 Accedi", "📝 Registra Nuova Azienda / Utente"])
-        
+
         with tab_log_1:
             with st.form("login_form"):
-                username_inserito = st.text_input("Nome Utente / Username", value="admin")
+                username_inserito = st.text_input("Nome Utente / Username", value="")
                 pwd_inserita = st.text_input("Password di Accesso", type="password")
-                btn_login = st.form_submit_button("Accedi al Gestionale")
+                btn_login = st.form_submit_button("Accedi al Gestionale", type="primary")
                 if btn_login:
+                    username_norm = username_inserito.strip()
                     with get_db_connection() as conn:
-                        df_user = pd.read_sql_query("SELECT * FROM utenti WHERE username=%s AND password=%s;", conn, params=(username_inserito, pwd_inserita))
-                    if not df_user.empty:
+                        with conn.cursor() as c:
+                            c.execute("""
+                                SELECT id, username, password, ragione_sociale, piva, azienda_id
+                                FROM utenti WHERE username=%s LIMIT 1;
+                            """, (username_norm,))
+                            user_row = c.fetchone()
+                    if user_row and verify_password(pwd_inserita, user_row[2]):
                         st.session_state["autenticato"] = True
-                        st.session_state["utente_connesso"] = username_inserito
+                        st.session_state["utente_connesso"] = user_row[1]
+                        st.session_state["ragione_sociale"] = user_row[3] or ""
+                        st.session_state["piva_azienda"] = user_row[4] or ""
+                        st.session_state["azienda_id"] = user_row[5] or user_row[4] or ""
                         st.rerun()
                     else:
                         st.error("Credenziali non valide. Verifica Nome Utente e Password.")
@@ -340,42 +520,60 @@ if not st.session_state["autenticato"]:
                 reg_pwd = st.text_input("Scegli Password *", type="password")
                 reg_ragione = st.text_input("Ragione Sociale Birrificio *", placeholder="es. Birrificio Artigianale...")
                 reg_piva = st.text_input("Partita IVA *", placeholder="es. 01234567890")
-                btn_reg = st.form_submit_button("Registra Azienda e Accedi")
+                btn_reg = st.form_submit_button("Registra Azienda e Accedi", type="primary")
                 if btn_reg:
+                    reg_user = reg_user.strip()
+                    reg_ragione = reg_ragione.strip()
+                    reg_piva = re.sub(r"\s+", "", reg_piva.strip())
                     if not (reg_user and reg_pwd and reg_ragione and reg_piva):
                         st.error("Tutti i campi contrassegnati sono obbligatori.")
+                    elif len(reg_pwd) < 10:
+                        st.error("Per sicurezza usa una password di almeno 10 caratteri.")
+                    elif len(reg_piva) not in (11, 16):
+                        st.error("Inserisci una Partita IVA/codice identificativo valido.")
                     else:
                         try:
+                            password_hash = hash_password(reg_pwd)
                             with get_db_connection() as conn:
                                 with conn.cursor() as c:
                                     c.execute("""
-                                        INSERT INTO utenti (username, password, ragione_sociale, piva)
-                                        VALUES (%s, %s, %s, %s);
-                                    """, (reg_user, reg_pwd, reg_ragione, reg_piva))
+                                        INSERT INTO utenti (username, password, ragione_sociale, piva, azienda_id)
+                                        VALUES (%s, %s, %s, %s, %s)
+                                        RETURNING id;
+                                    """, (reg_user, password_hash, reg_ragione, reg_piva, reg_piva))
+                                    c.fetchone()
                                 conn.commit()
                             st.session_state["autenticato"] = True
                             st.session_state["utente_connesso"] = reg_user
+                            st.session_state["ragione_sociale"] = reg_ragione
+                            st.session_state["piva_azienda"] = reg_piva
+                            st.session_state["azienda_id"] = reg_piva
                             st.success("Registrazione completata con successo! Benvenuto in BrewDesk.")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Errore durante la registrazione (Username già esistente?): {e}")
+                            st.error(f"Errore durante la registrazione. Username o Partita IVA potrebbero essere già presenti: {e}")
     st.stop()
 
-# --- BARRA LATERALE ---
+# Dopo il login questi valori diventano dinamici per report, sidebar e documenti.
+RAGIONE_AZIENDA = st.session_state.get("ragione_sociale") or RAGIONE_AZIENDA
+PIVA_AZIENDA = st.session_state.get("piva_azienda") or PIVA_AZIENDA
+
+# --- BARRA LATERALE -------------------------------------------------------
 if os.path.exists(LOGO_FILENAME):
     st.sidebar.image(LOGO_FILENAME, width=150)
 st.sidebar.markdown(f"### **{RAGIONE_AZIENDA}**")
 st.sidebar.caption(f"P.IVA: `{PIVA_AZIENDA}`")
-st.sidebar.info(f"⚖️ **Accisa 2026 (Microbirrifici -50%):** `{ALIQUOTA_ACCISA_PLATO:.3f} €/hl/°P`")
+st.sidebar.info(f"⚖️ **Accisa configurata:** `{ALIQUOTA_ACCISA_PLATO:.3f} €/hl/°P` — verificare annualmente con consulente/ADM.")
 st.sidebar.markdown(f"👤 **Operatore:** `{st.session_state['utente_connesso']}`")
+st.sidebar.caption(f"🔐 Tenant: `{st.session_state.get('azienda_id', '')}`")
 if st.sidebar.button("Disconnetti (Logout)"):
-    st.session_state["autenticato"] = False
-    st.session_state["utente_connesso"] = ""
+    for k in ("autenticato", "utente_connesso", "azienda_id", "ragione_sociale", "piva_azienda"):
+        st.session_state.pop(k, None)
     st.rerun()
 
 # --- FUNZIONI CACHED A PRESTAZIONI FULMINEE (MILLISECONDI) ---
 @st.cache_data(ttl=600)
-def get_cached_riepilogo():
+def get_cached_riepilogo(tenant_id):
     with get_db_connection() as conn:
         with conn.cursor() as c:
             c.execute("""
@@ -403,7 +601,7 @@ def get_cached_riepilogo():
     return float(mp[0]), float(mp[1]), float(mp[2]), int(bc[0]), float(bc[1]), float(tot_mosto_lordo), int(fusti_fuori)
 
 @st.cache_data(ttl=600)
-def get_cached_ultimi_costi():
+def get_cached_ultimi_costi(tenant_id):
     with get_db_connection() as conn:
         df = pd.read_sql_query("""
             SELECT 
@@ -418,9 +616,29 @@ def get_cached_ultimi_costi():
         return float(df.iloc[0]["c_malto"]), float(df.iloc[0]["c_luppolo"]), float(df.iloc[0]["c_lievito"])
     return 1.40, 28.00, 65.00
 
+def invalidate_caches():
+    """Invalidazione mirata: evita di svuotare indiscriminatamente tutta la cache Streamlit."""
+    try:
+        get_cached_riepilogo.clear()
+    except Exception:
+        pass
+    try:
+        get_cached_ultimi_costi.clear()
+    except Exception:
+        pass
+
+
 def get_incidenza_costi_fissi_litro():
+    """Costo fisso/utenze reale: somma il registro legacy e le fatture strutturate."""
     with get_db_connection() as conn:
-        df_spese = pd.read_sql_query("SELECT COALESCE(SUM(importo_totale_euro), 0) as tot_spese FROM costi_fissi_utenze;", conn)
+        df_spese = pd.read_sql_query("""
+            SELECT COALESCE(SUM(importo), 0) AS tot_spese
+            FROM (
+                SELECT COALESCE(importo_totale_euro, 0) AS importo FROM costi_fissi_utenze
+                UNION ALL
+                SELECT COALESCE(totale_fattura, 0) AS importo FROM fatture_utenze
+            ) AS costi;
+        """, conn)
         df_litri = pd.read_sql_query("SELECT COALESCE(SUM(litri_mosto), 0) as tot_litri FROM registro_mosto;", conn)
     tot_spese = float(df_spese.iloc[0]["tot_spese"]) if not df_spese.empty else 0.0
     tot_litri = float(df_litri.iloc[0]["tot_litri"]) if not df_litri.empty else 0.0
@@ -602,7 +820,7 @@ def get_stato_scadenza(data_scadenza, stato_pagamento):
         return "PAGATA"
     if not data_scadenza:
         return stato_pagamento or "DA PAGARE"
-    oggi = datetime.now().date()
+    oggi = oggi_it()
     if data_scadenza < oggi:
         return "SCADUTA"
     if (data_scadenza - oggi).days <= 3:
@@ -1067,6 +1285,7 @@ def init_db_extra():
                 );
             """)
             c.execute("CREATE INDEX IF NOT EXISTS idx_pianificazione_data ON pianificazione_cotte(data_cotta);")
+            _configure_tenant_security(c, EXTRA_TENANT_TABLES, _tenant_from_session() or PIVA_AZIENDA)
         conn.commit()
     return True
 
@@ -1881,7 +2100,7 @@ with col_head1:
 with col_head2:
     st.title("BrewDesk Pro — Microbrewery Management Platform")
 
-malto, luppolo, lievito, tot_confezioni, tot_litri_finiti, tot_mosto_lordo, tot_fusti_fuori = get_cached_riepilogo()
+malto, luppolo, lievito, tot_confezioni, tot_litri_finiti, tot_mosto_lordo, tot_fusti_fuori = get_cached_riepilogo(st.session_state.get("azienda_id", ""))
 
 # --- BLOCCO CONTALITRI & VOLUMI IN PRIMO PIANO ---
 st.markdown("### 🎛️ Contalitri Produzione & Giacenze Volumi")
@@ -1938,7 +2157,7 @@ with tab1:
         df_cotte_all = pd.read_sql_query("SELECT * FROM registro_mosto ORDER BY id DESC;", conn)
         df_ricette_all = pd.read_sql_query("SELECT * FROM ricette ORDER BY nome_ricetta ASC;", conn)
 
-    c_m_default, c_l_default, c_y_default = get_cached_ultimi_costi()
+    c_m_default, c_l_default, c_y_default = get_cached_ultimi_costi(st.session_state.get("azienda_id", ""))
 
     modalita_cotta = st.radio(
         "Azione:", 
@@ -2015,7 +2234,7 @@ with tab1:
                         """, (r_nome, r_stile, r_malto, r_lup_g, r_liev_g, stringa_spezie, 0, json_spezie, r_plato, r_litri, r_note))
                     conn.commit()
                 st.session_state["ingredienti_temp_ricetta"] = []
-                st.cache_data.clear()
+                invalidate_caches()
                 st.success(f"Ricetta '{r_nome}' salvata con successo!")
                 st.rerun()
 
@@ -2033,13 +2252,13 @@ with tab1:
                     with conn.cursor() as c:
                         c.execute("DELETE FROM registro_mosto WHERE id=%s;", (id_del,))
                     conn.commit()
-                st.cache_data.clear()
+                invalidate_caches()
                 st.success(f"Cotta ID {id_del} eliminata con successo!")
                 st.rerun()
 
     else:
-        val_data, val_data_prev = datetime.now().date(), datetime.now().date()
-        val_c_num, val_lotto = "C26-01", f"LOTTO-{datetime.now().strftime('%y%m%d')}"
+        val_data, val_data_prev = oggi_it(), oggi_it()
+        val_c_num, val_lotto = "C26-01", f"LOTTO-{oggi_it().strftime('%y%m%d')}"
         val_stile = "Blonde"
         val_cl_ini, val_cl_fin = 0.0, 500.0
         val_litri = 500.0
@@ -2296,7 +2515,7 @@ with tab1:
                 conn.commit()
             st.session_state["ingredienti_temp_cotta"] = []
             st.session_state["sanificanti_temp_cotta"] = []
-            st.cache_data.clear()
+            invalidate_caches()
             st.rerun()
 
     st.write("---")
@@ -2352,7 +2571,7 @@ with tab2:
                                 VALUES (%s, %s, %s, %s, %s, TRUE);
                             """, (num_t, nome_t, proto_t, cap_t, set_t))
                         conn.commit()
-                    st.cache_data.clear()
+                    invalidate_caches()
                     st.success(f"Fermentatore '{nome_t}' aggiunto con successo!")
                     st.rerun()
 
@@ -2368,7 +2587,7 @@ with tab2:
                     with conn.cursor() as c:
                         c.execute("DELETE FROM configurazione_fermentatori WHERE numero_tank=%s;", (num_estratto,))
                     conn.commit()
-                st.cache_data.clear()
+                invalidate_caches()
                 st.success("Tank rimosso!")
                 st.rerun()
         else:
@@ -2452,7 +2671,7 @@ with tab2:
                 with conn.cursor() as c:
                     c.execute("DELETE FROM telemetria_fermentatori;")
                 conn.commit()
-            st.cache_data.clear()
+            invalidate_caches()
             st.success("Tabella telemetria ripulita con successo!")
             st.rerun()
 
@@ -2465,7 +2684,7 @@ with tab3:
     with col_tf1:
         st.markdown("#### 🚚 Registra Consegna Fusti a un Pub")
         with st.form("form_consegna_fusti"):
-            tf_data = st.date_input("Data Consegna", value=datetime.now())
+            tf_data = st.date_input("Data Consegna", value=datetime.now(_ZoneInfo(FUSO_ORARIO_APP)) if _ZoneInfo else datetime.now())
             tf_pub = st.text_input("Nome Pub / Locale *", placeholder="es. Birroteca Centrale...")
             tf_formato = st.selectbox("Formato Fusto:", ["Fusto 20L", "Fusto 24L", "Fusto 25L", "Fusto 30L", "Fusto 12L"])
             tf_qta = st.number_input("Quantità Consegnata (pz)", min_value=1, step=1, value=2)
@@ -2484,7 +2703,7 @@ with tab3:
                                 VALUES ('USCITA_PUB', %s, %s, %s, %s, %s, %s, %s);
                             """, (tf_data.strftime("%Y-%m-%d"), tf_pub.strip(), tf_formato, tf_qta, tf_lotto, tf_cauz, tf_ddt))
                         conn.commit()
-                    st.cache_data.clear()
+                    invalidate_caches()
                     st.success(f"Consegna registrata!")
                     st.rerun()
 
@@ -2506,7 +2725,7 @@ with tab3:
                 pub_selezionato = st.selectbox("Seleziona Pub che rende i fusti vuoti:", lista_pub)
                 pub_nome_pulito = pub_selezionato.split(" (")[0].strip()
                 
-                rf_data = st.date_input("Data Rientro Fusti", value=datetime.now())
+                rf_data = st.date_input("Data Rientro Fusti", value=datetime.now(_ZoneInfo(FUSO_ORARIO_APP)) if _ZoneInfo else datetime.now())
                 rf_formato = st.selectbox("Formato Fusto Restituito:", ["Fusto 20L", "Fusto 24L", "Fusto 25L", "Fusto 30L", "Fusto 12L"])
                 rf_qta = st.number_input("Numero Fusti Vuoti Restituiti (pz)", min_value=1, step=1, value=1)
                 rf_note = st.text_input("Note / Ritiro", placeholder="es. Ritiro furgone")
@@ -2525,7 +2744,7 @@ with tab3:
                                 VALUES ('CARICO', %s, %s, %s, %s, 0.0);
                             """, (rf_data.strftime("%Y-%m-%d"), f"Reso da {pub_nome_pulito}", art_imb_mappato, rf_qta))
                         conn.commit()
-                    st.cache_data.clear()
+                    invalidate_caches()
                     st.success(f"Rientro registrato! {rf_qta} fusti scaricati dal locale.")
                     st.rerun()
         else:
@@ -2599,12 +2818,12 @@ with tab4:
                 numero_fattura = st.text_input("Numero fattura", value=xml_dati.get("numero_fattura", ""))
 
             with col_s2:
-                data_default = xml_dati.get("data_fattura") or datetime.now().date()
-                scad_default = xml_dati.get("data_scadenza") or datetime.now().date()
+                data_default = xml_dati.get("data_fattura") or oggi_it()
+                scad_default = xml_dati.get("data_scadenza") or oggi_it()
                 data_fattura = st.date_input("Data fattura", value=data_default)
                 data_scadenza = st.date_input("Data scadenza", value=scad_default)
-                periodo_da = st.date_input("Periodo dal", value=xml_dati.get("periodo_da") or datetime.now().date(), key="utenza_periodo_da")
-                periodo_a = st.date_input("Periodo al", value=xml_dati.get("periodo_a") or datetime.now().date(), key="utenza_periodo_a")
+                periodo_da = st.date_input("Periodo dal", value=xml_dati.get("periodo_da") or oggi_it(), key="utenza_periodo_da")
+                periodo_a = st.date_input("Periodo al", value=xml_dati.get("periodo_a") or oggi_it(), key="utenza_periodo_a")
                 stato_pagamento = st.selectbox("Stato", ["DA PAGARE", "PAGATA"], index=0)
 
             with col_s3:
@@ -2679,7 +2898,7 @@ with tab4:
         with st.form("form_spese_fisse_legacy"):
             col_s1, col_s2, col_s3 = st.columns(3)
             with col_s1:
-                sp_data = st.date_input("Data spesa", value=datetime.now().date(), key="legacy_sp_data")
+                sp_data = st.date_input("Data spesa", value=oggi_it(), key="legacy_sp_data")
                 sp_cat = st.selectbox("Categoria", [
                     "Energia Elettrica (Bolletta)", "Gas Metano di Rete", "GPL Carico Serbatoio Fisso",
                     "Bombole Gas / Pacchi Bombole", "Acqua & Fognatura", "Affitto / Canone Capannone",
@@ -2744,66 +2963,72 @@ with tab4:
             df_fatture["Stato"] = [get_stato_scadenza(r.data_scadenza, r.stato_pagamento) for r in df_fatture.itertuples()]
             if filtro_stato != "Tutti":
                 df_fatture = df_fatture[df_fatture["Stato"] == filtro_stato].copy()
-            df_fatture["Periodo"] = [formatta_periodo_fattura(r.periodo_da, r.periodo_a) for r in df_fatture.itertuples()]
-            df_view = df_fatture[["id", "tipo_utenza", "fornitore", "numero_fattura", "data_fattura", "data_scadenza", "Periodo", "consumo", "unita_misura", "totale_fattura", "Stato"]].copy()
-            df_view.columns = ["ID", "Utenza", "Fornitore", "Fattura", "Data", "Scadenza", "Periodo", "Consumo", "U.M.", "Totale (€)", "Stato"]
-            st.dataframe(df_view, use_container_width=True, hide_index=True)
 
-            totale_storico = float(df_fatture["totale_fattura"].fillna(0).sum())
-            da_pagare = float(df_fatture.loc[df_fatture["stato_pagamento"] != "PAGATA", "totale_fattura"].fillna(0).sum())
-            scadute = sum(1 for r in df_fatture.itertuples() if get_stato_scadenza(r.data_scadenza, r.stato_pagamento) == "SCADUTA")
-            in_scadenza = sum(1 for r in df_fatture.itertuples() if get_stato_scadenza(r.data_scadenza, r.stato_pagamento) == "IN SCADENZA")
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Totale visualizzato", f"€ {totale_storico:,.2f}")
-            m2.metric("Da pagare", f"€ {da_pagare:,.2f}")
-            m3.metric("Scadute", scadute)
-            m4.metric("In scadenza ≤ 3 gg", in_scadenza)
+            # Il filtro dello stato viene calcolato lato Python: può trasformare
+            # un DataFrame inizialmente non vuoto in uno completamente vuoto.
+            if df_fatture.empty:
+                st.info("Nessuna bolletta trovata per il filtro selezionato.")
+            else:
+                df_fatture["Periodo"] = [formatta_periodo_fattura(r.periodo_da, r.periodo_a) for r in df_fatture.itertuples()]
+                df_view = df_fatture[["id", "tipo_utenza", "fornitore", "numero_fattura", "data_fattura", "data_scadenza", "Periodo", "consumo", "unita_misura", "totale_fattura", "Stato"]].copy()
+                df_view.columns = ["ID", "Utenza", "Fornitore", "Fattura", "Data", "Scadenza", "Periodo", "Consumo", "U.M.", "Totale (€)", "Stato"]
+                st.dataframe(df_view, use_container_width=True, hide_index=True)
 
-            st.markdown("### 🔎 Dettaglio documento")
-            id_scelto = st.selectbox("Seleziona fattura", df_fatture["id"].tolist(), format_func=lambda x: f"ID {x} — {df_fatture.loc[df_fatture['id']==x, 'fornitore'].iloc[0]} — € {float(df_fatture.loc[df_fatture['id']==x, 'totale_fattura'].iloc[0] or 0):,.2f}")
-            riga = df_fatture[df_fatture["id"] == id_scelto].iloc[0]
+                totale_storico = float(df_fatture["totale_fattura"].fillna(0).sum())
+                da_pagare = float(df_fatture.loc[df_fatture["stato_pagamento"] != "PAGATA", "totale_fattura"].fillna(0).sum())
+                scadute = sum(1 for r in df_fatture.itertuples() if get_stato_scadenza(r.data_scadenza, r.stato_pagamento) == "SCADUTA")
+                in_scadenza = sum(1 for r in df_fatture.itertuples() if get_stato_scadenza(r.data_scadenza, r.stato_pagamento) == "IN SCADENZA")
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Totale visualizzato", f"€ {totale_storico:,.2f}")
+                m2.metric("Da pagare", f"€ {da_pagare:,.2f}")
+                m3.metric("Scadute", scadute)
+                m4.metric("In scadenza ≤ 3 gg", in_scadenza)
 
-            dc1, dc2, dc3 = st.columns(3)
-            with dc1:
-                st.write(f"**Fornitore:** {riga['fornitore'] or '-'}")
-                st.write(f"**P.IVA:** {riga['piva_fornitore'] or '-'}")
-                st.write(f"**Fattura:** {riga['numero_fattura'] or '-'}")
-            with dc2:
-                st.write(f"**Scadenza:** {riga['data_scadenza'] or '-'}")
-                st.write(f"**POD/PDR:** {riga['pod_pdr'] or '-'}")
-                st.write(f"**Consumo:** {float(riga['consumo'] or 0):,.2f} {riga['unita_misura'] or ''}")
-            with dc3:
-                st.write(f"**Totale:** € {float(riga['totale_fattura'] or 0):,.2f}")
-                st.write(f"**Stato:** {get_stato_scadenza(riga['data_scadenza'], riga['stato_pagamento'])}")
-                if riga["data_scadenza"]:
-                    ics = genera_ics_scadenza_fattura(int(id_scelto), riga["fornitore"], riga["numero_fattura"], riga["data_scadenza"], riga["totale_fattura"], riga["tipo_utenza"])
-                    st.download_button("📅 Scarica promemoria .ICS", data=ics, file_name=f"scadenza_bolletta_{id_scelto}.ics", mime="text/calendar", key=f"ics_{id_scelto}")
+                st.markdown("### 🔎 Dettaglio documento")
+                id_scelto = st.selectbox("Seleziona fattura", df_fatture["id"].tolist(), format_func=lambda x: f"ID {x} — {df_fatture.loc[df_fatture['id']==x, 'fornitore'].iloc[0]} — € {float(df_fatture.loc[df_fatture['id']==x, 'totale_fattura'].iloc[0] or 0):,.2f}")
+                riga = df_fatture[df_fatture["id"] == id_scelto].iloc[0]
 
-            az1, az2 = st.columns(2)
-            with az1:
-                if riga["file_xml_nome"]:
-                    with get_db_connection() as conn:
-                        doc = pd.read_sql_query("SELECT file_xml FROM fatture_utenze WHERE id=%s", conn, params=(int(id_scelto),))
-                    if not doc.empty and doc.iloc[0]["file_xml"] is not None:
-                        st.download_button("⬇️ Scarica XML", data=bytes(doc.iloc[0]["file_xml"]), file_name=riga["file_xml_nome"], mime="application/xml", key=f"xml_{id_scelto}")
-            with az2:
-                if riga["file_pdf_nome"]:
-                    with get_db_connection() as conn:
-                        doc = pd.read_sql_query("SELECT file_pdf FROM fatture_utenze WHERE id=%s", conn, params=(int(id_scelto),))
-                    if not doc.empty and doc.iloc[0]["file_pdf"] is not None:
-                        st.download_button("⬇️ Scarica PDF", data=bytes(doc.iloc[0]["file_pdf"]), file_name=riga["file_pdf_nome"], mime="application/pdf", key=f"pdf_{id_scelto}")
+                dc1, dc2, dc3 = st.columns(3)
+                with dc1:
+                    st.write(f"**Fornitore:** {riga['fornitore'] or '-'}")
+                    st.write(f"**P.IVA:** {riga['piva_fornitore'] or '-'}")
+                    st.write(f"**Fattura:** {riga['numero_fattura'] or '-'}")
+                with dc2:
+                    st.write(f"**Scadenza:** {riga['data_scadenza'] or '-'}")
+                    st.write(f"**POD/PDR:** {riga['pod_pdr'] or '-'}")
+                    st.write(f"**Consumo:** {float(riga['consumo'] or 0):,.2f} {riga['unita_misura'] or ''}")
+                with dc3:
+                    st.write(f"**Totale:** € {float(riga['totale_fattura'] or 0):,.2f}")
+                    st.write(f"**Stato:** {get_stato_scadenza(riga['data_scadenza'], riga['stato_pagamento'])}")
+                    if riga["data_scadenza"]:
+                        ics = genera_ics_scadenza_fattura(int(id_scelto), riga["fornitore"], riga["numero_fattura"], riga["data_scadenza"], riga["totale_fattura"], riga["tipo_utenza"])
+                        st.download_button("📅 Scarica promemoria .ICS", data=ics, file_name=f"scadenza_bolletta_{id_scelto}.ics", mime="text/calendar", key=f"ics_{id_scelto}")
 
-            st.markdown("### ✏️ Aggiorna stato pagamento")
-            with st.form(f"form_pagamento_{id_scelto}"):
-                nuovo_stato = st.selectbox("Stato pagamento", ["DA PAGARE", "PAGATA"], index=1 if riga["stato_pagamento"] == "PAGATA" else 0)
-                nuova_data_pag = st.date_input("Data pagamento", value=(riga["data_pagamento"] or datetime.now().date()), key=f"data_pag_{id_scelto}")
-                if st.form_submit_button("Aggiorna pagamento"):
-                    with get_db_connection() as conn:
-                        with conn.cursor() as c:
-                            c.execute("UPDATE fatture_utenze SET stato_pagamento=%s, data_pagamento=%s WHERE id=%s", (nuovo_stato, nuova_data_pag if nuovo_stato == "PAGATA" else None, int(id_scelto)))
-                        conn.commit()
-                    st.success("Stato aggiornato.")
-                    st.rerun()
+                az1, az2 = st.columns(2)
+                with az1:
+                    if riga["file_xml_nome"]:
+                        with get_db_connection() as conn:
+                            doc = pd.read_sql_query("SELECT file_xml FROM fatture_utenze WHERE id=%s", conn, params=(int(id_scelto),))
+                        if not doc.empty and doc.iloc[0]["file_xml"] is not None:
+                            st.download_button("⬇️ Scarica XML", data=bytes(doc.iloc[0]["file_xml"]), file_name=riga["file_xml_nome"], mime="application/xml", key=f"xml_{id_scelto}")
+                with az2:
+                    if riga["file_pdf_nome"]:
+                        with get_db_connection() as conn:
+                            doc = pd.read_sql_query("SELECT file_pdf FROM fatture_utenze WHERE id=%s", conn, params=(int(id_scelto),))
+                        if not doc.empty and doc.iloc[0]["file_pdf"] is not None:
+                            st.download_button("⬇️ Scarica PDF", data=bytes(doc.iloc[0]["file_pdf"]), file_name=riga["file_pdf_nome"], mime="application/pdf", key=f"pdf_{id_scelto}")
+
+                st.markdown("### ✏️ Aggiorna stato pagamento")
+                with st.form(f"form_pagamento_{id_scelto}"):
+                    nuovo_stato = st.selectbox("Stato pagamento", ["DA PAGARE", "PAGATA"], index=1 if riga["stato_pagamento"] == "PAGATA" else 0)
+                    nuova_data_pag = st.date_input("Data pagamento", value=(riga["data_pagamento"] or oggi_it()), key=f"data_pag_{id_scelto}")
+                    if st.form_submit_button("Aggiorna pagamento"):
+                        with get_db_connection() as conn:
+                            with conn.cursor() as c:
+                                c.execute("UPDATE fatture_utenze SET stato_pagamento=%s, data_pagamento=%s WHERE id=%s", (nuovo_stato, nuova_data_pag if nuovo_stato == "PAGATA" else None, int(id_scelto)))
+                            conn.commit()
+                        st.success("Stato aggiornato.")
+                        st.rerun()
         else:
             st.info("Nessuna bolletta presente con i filtri selezionati.")
 
@@ -2930,7 +3155,7 @@ with tab6:
                         cedente = root.find(".//DatiAnagraficiCedente")
                         mittente = trova_testo_nodo(cedente, ["Denominazione", "Cognome"]) if cedente is not None else up_xml.name
                         num_doc = trova_testo_nodo(root, ["Numero"]) or "N.D."
-                        data_doc = trova_testo_nodo(root, ["Data"]) or pd.Timestamp.now().strftime("%Y-%m-%d")
+                        data_doc = trova_testo_nodo(root, ["Data"]) or oggi_it().strftime("%Y-%m-%d")
                         rif_fattura = f"Fatt. {num_doc}"
 
                         c.execute("SELECT id FROM materie_prime WHERE riferimento=%s AND azienda=%s LIMIT 1;", (rif_fattura, mittente))
@@ -2967,7 +3192,7 @@ with tab6:
                 conn.commit()
 
         if carichi_mp > 0:
-            st.cache_data.clear()
+            invalidate_caches()
             st.success(f"Caricate {carichi_mp} nuove fatture!")
             st.rerun()
 
@@ -3003,7 +3228,7 @@ with tab7:
                         VALUES ('CARICO', %s, %s, %s, %s, %s);
                     """, (i_data, i_doc, i_art, i_qta, i_costo))
                 conn.commit()
-            st.cache_data.clear()
+            invalidate_caches()
             st.success("Imballaggi registrati!")
             st.rerun()
 
@@ -3040,7 +3265,7 @@ with tab8:
 
     with st.form("conf_misto_form"):
         col_gen1, col_gen2, col_gen3 = st.columns(3)
-        with col_gen1: data_imb = st.date_input("Data Confezionamento", value=datetime.now())
+        with col_gen1: data_imb = st.date_input("Data Confezionamento", value=oggi_it())
         with col_gen2: lotto_c = st.text_input("Lotto Confezionato", value=lotto_def)
         with col_gen3: costo_p_lt = st.number_input("Costo Produzione Mosto (€/LT)", min_value=0.01, value=costo_suggerito_lt, step=0.05)
 
@@ -3093,7 +3318,7 @@ with tab8:
                                 c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', %s, %s, 'Tappi a corona', %s);", (d_str, f"Lotto {lotto_c}", qta))
                                 c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', %s, %s, 'Etichette', %s);", (d_str, f"Lotto {lotto_c}", qta))
                     conn.commit()
-                st.cache_data.clear()
+                invalidate_caches()
                 st.success(f"Confezionamento registrato! Caricati {litri_effettivi:.1f} LT a magazzino.")
                 st.rerun()
 
@@ -3102,12 +3327,23 @@ with tab8:
 # =========================================================================
 with tab9:
     st.subheader("🚚 Scarico Vendite Birra (Fatture XML & Manuale)")
+    st.caption("Nota contabile: il PrezzoUnitario della fattura di vendita è il prezzo di vendita, NON il costo industriale. Il costo dello scarico viene valorizzato al costo medio ponderato del magazzino.")
     up_vendite_xml = st.file_uploader("Trascina qui le fatture XML emesse", type=["xml"], accept_multiple_files=True, key="xml_vendite")
 
     if up_vendite_xml and st.button("Elabora e Scarica Fatture Emesse"):
         tot_scarichi, tot_litri = 0, 0.0
         with get_db_connection() as conn:
             with conn.cursor() as c:
+                c.execute("""
+                    SELECT COALESCE(
+                        SUM(litri_totali * costo_produzione_litro) / NULLIF(SUM(litri_totali), 0),
+                        1.10
+                    )
+                    FROM birra_condizionata
+                    WHERE tipo='CARICO' AND litri_totali > 0;
+                """)
+                costo_medio_stock_litro = float(c.fetchone()[0] or 1.10)
+
                 for up_xml in up_vendite_xml:
                     try:
                         content = up_xml.read()
@@ -3115,7 +3351,7 @@ with tab9:
                         cess = root.find(".//DatiAnagraficiCessionario")
                         cliente = trova_testo_nodo(cess, ["Denominazione", "Cognome"]) if cess is not None else "Cliente"
                         num_doc = trova_testo_nodo(root, ["Numero"]) or "N.D."
-                        data_doc = trova_testo_nodo(root, ["Data"]) or pd.Timestamp.now().strftime("%Y-%m-%d")
+                        data_doc = trova_testo_nodo(root, ["Data"]) or oggi_it().strftime("%Y-%m-%d")
                         rif_vendita = f"Fatt. {num_doc} - {cliente}"
 
                         c.execute("SELECT id FROM birra_condizionata WHERE documento_rif=%s LIMIT 1;", (rif_vendita,))
@@ -3142,7 +3378,7 @@ with tab9:
                         st.error(f"Errore su {up_xml.name}: {e}")
                 conn.commit()
         if tot_scarichi > 0:
-            st.cache_data.clear()
+            invalidate_caches()
             st.success(f"Registrati {tot_scarichi} scarichi per {tot_litri:.1f} Litri!")
             st.rerun()
 
@@ -3153,7 +3389,7 @@ with tab9:
         fmt_v = st.selectbox("Formato Venduto", ["Fusto 12L", "Fusto 20L", "Fusto 24L", "Fusto 25L", "Fusto 30L", "Bottiglia 0.33L", "Bottiglia 0.75L"])
         qta_v = st.number_input("Quantità Venduta", min_value=1, step=1)
         if st.form_submit_button("Registra Scarico Magazzino"):
-            oggi = pd.Timestamp.now().strftime("%Y-%m-%d")
+            oggi = oggi_it().strftime("%Y-%m-%d")
             l_map = {"Fusto 12L": 12.0, "Fusto 20L": 20.0, "Fusto 24L": 24.0, "Fusto 25L": 25.0, "Fusto 30L": 30.0, "Bottiglia 0.33L": 0.33, "Bottiglia 0.75L": 0.75}
             with get_db_connection() as conn:
                 with conn.cursor() as c:
@@ -3162,7 +3398,7 @@ with tab9:
                         VALUES ('SCARICO', %s, '-', %s, %s, %s, %s);
                     """, (oggi, fmt_v, qta_v, qta_v * l_map[fmt_v], doc_v))
                 conn.commit()
-            st.cache_data.clear()
+            invalidate_caches()
             st.success("Scarico birra registrato!")
             st.rerun()
 
@@ -3204,7 +3440,7 @@ with tab10:
                     with conn.cursor() as c:
                         c.execute("DELETE FROM birra_condizionata WHERE id=%s;", (id_m_del,))
                     conn.commit()
-                    st.cache_data.clear()
+                    invalidate_caches()
                     st.success("Movimento eliminato!")
                     st.rerun()
 

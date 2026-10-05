@@ -41,8 +41,6 @@ st.markdown(
 PIVA_AZIENDA = "01822710628"
 CF_AZIENDA = "NBLLGU54L09F636V"
 RAGIONE_AZIENDA = "Birrificio Nobile"
-
-# Accisa 2026: 1.490 €/hl/°P (Microbirrifici -50% fino a 10.000 hl)
 ALIQUOTA_ACCISA_PLATO = 1.490
 
 # --- GESTIONE POOL CONNESSIONI DUAL-MODE (GCP + STREAMLIT) ---
@@ -237,7 +235,6 @@ def init_db():
                 );
             """)
 
-            # Inserimento utente amministratore di default se la tabella è vuota
             c.execute("SELECT COUNT(*) FROM utenti;")
             if c.fetchone()[0] == 0:
                 c.execute("""
@@ -342,7 +339,8 @@ if st.sidebar.button("Disconnetti (Logout)"):
     st.session_state["utente_connesso"] = ""
     st.rerun()
 
-@st.cache_data(ttl=15)
+# --- FUNZIONI CACHED A PRESTAZIONI FULMINEE (MILLISECONDI) ---
+@st.cache_data(ttl=600)
 def get_cached_riepilogo():
     with get_db_connection() as conn:
         with conn.cursor() as c:
@@ -370,7 +368,7 @@ def get_cached_riepilogo():
             fusti_fuori = c.fetchone()[0] or 0
     return float(mp[0]), float(mp[1]), float(mp[2]), int(bc[0]), float(bc[1]), float(tot_mosto_lordo), int(fusti_fuori)
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=600)
 def get_cached_ultimi_costi():
     with get_db_connection() as conn:
         df = pd.read_sql_query("""
@@ -392,9 +390,7 @@ def get_incidenza_costi_fissi_litro():
         df_litri = pd.read_sql_query("SELECT COALESCE(SUM(litri_mosto), 0) as tot_litri FROM registro_mosto;", conn)
     tot_spese = float(df_spese.iloc[0]["tot_spese"]) if not df_spese.empty else 0.0
     tot_litri = float(df_litri.iloc[0]["tot_litri"]) if not df_litri.empty else 0.0
-    if tot_litri > 0:
-        return tot_spese / tot_litri
-    return 0.35
+    return (tot_spese / tot_litri) if tot_litri > 0 else 0.35
 
 def formatta_spezie_stringa(lista_ingredienti):
     if not lista_ingredienti:
@@ -655,9 +651,9 @@ cv1, cv2, cv3, cv4 = st.columns(4)
 calo_tot_litri = max(0.0, tot_mosto_lordo - tot_litri_finiti)
 perc_resa_vol = (tot_litri_finiti / tot_mosto_lordo * 100.0) if tot_mosto_lordo > 0 else 0.0
 
-cv1.metric("💧 Contalitri Mosto Lordo (Totale Cotte)", f"{tot_mosto_lordo:,.1f} LT", help="Somma totale dei litri usciti dal contalitri della sala cottura e dichiarati in Allegato I")
-cv2.metric("🍺 Birra Effettiva a Magazzino", f"{tot_litri_finiti:,.1f} LT", help="Litri netti realmente confezionati e ancora disponibili nei magazzini")
-cv3.metric("📉 Calo / Scarto Cantina Complessivo", f"{calo_tot_litri:,.1f} LT", delta=f"{perc_resa_vol:.1f}% resa vol.", delta_color="normal")
+cv1.metric("💧 Contalitri Mosto Lordo (Totale Cotte)", f"{tot_mosto_lordo:,.1f} LT")
+cv2.metric("🍺 Birra Effettiva a Magazzino", f"{tot_litri_finiti:,.1f} LT")
+cv3.metric("📉 Calo / Scarto Cantina Complessivo", f"{calo_tot_litri:,.1f} LT", delta=f"{perc_resa_vol:.1f}% resa vol.")
 cv4.metric("🛢️ Fusti nei Pub (Vuoti da Rendere)", f"{tot_fusti_fuori} fusti", delta=f"{tot_fusti_fuori} fusti fuori" if tot_fusti_fuori > 0 else "Nessun fusto fuori")
 
 st.markdown("##### 🌾 Giacenze Materie Prime")
@@ -708,7 +704,6 @@ with tab1:
     if "sanificanti_temp_cotta" not in st.session_state:
         st.session_state["sanificanti_temp_cotta"] = []
 
-    # --- RICETTE ---
     if modalita_cotta == "📖 Gestione Ricette (Crea/Salva Nuova Ricetta)":
         st.markdown("### 📖 Crea e Salva una Nuova Ricetta nel Database")
         rc1, rc2 = st.columns(2)
@@ -751,7 +746,7 @@ with tab1:
                 ci1, ci2, ci3 = st.columns([4, 3, 1])
                 ci1.write(f"🌿 **{item['nome']}**")
                 ci2.write(f"{item['grammi']} g")
-                if ci3.button("🗑️", key=f"del_ing_ric_{idx_ing}"):
+                if ci3.button("🗑️️", key=f"del_ing_ric_{idx_ing}"):
                     st.session_state["ingredienti_temp_ricetta"].pop(idx_ing)
                     st.rerun()
 
@@ -779,7 +774,6 @@ with tab1:
         if not df_ricette_all.empty:
             st.dataframe(df_ricette_all[["id", "nome_ricetta", "stile_birra", "fermentabili_kg", "luppoli_gr", "lieviti_gr", "altri_ingredienti_nome", "plato_previsto", "litri_previsti"]], use_container_width=True)
 
-    # --- ELIMINA COTTA ---
     elif modalita_cotta == "🗑️ Elimina Cotta Errata":
         if not df_cotte_all.empty:
             scelte_cotte_del = [f"ID {r['id']} | Cotta {r['cotta_num']} - Lotto {r['lotto_sfuso']} ({r['tipo_birra']}) - {r['data']}" for _, r in df_cotte_all.iterrows()]
@@ -794,7 +788,6 @@ with tab1:
                 st.success(f"Cotta ID {id_del} eliminata con successo!")
                 st.rerun()
 
-    # --- REGISTRA/MODIFICA COTTA ---
     else:
         val_data, val_data_prev = datetime.now().date(), datetime.now().date()
         val_c_num, val_lotto = "C26-01", f"LOTTO-{datetime.now().strftime('%y%m%d')}"
@@ -1070,11 +1063,11 @@ with tab1:
         """, conn), use_container_width=True)
 
 # =========================================================================
-# TAB 2: CANTINA IOT & MULTI-PROTOCOLLO (MQTT, MODBUS, OPC UA, iSpindel, Inkbird)
+# TAB 2: CANTINA IOT & MULTI-PROTOCOLLO
 # =========================================================================
 with tab2:
     st.subheader("📡 Cantina Pro: Setup Fermentatori & Controllo Multi-Protocollo")
-    st.info("Configura i tuoi fermentatori, assegna un nome, un numero e scegli se abbinarli a protocolli standard (MQTT, Modbus RTU/TCP, OPC UA, iSpindel o Inkbird bridge). Puoi impostare i setpoint di temperatura direttamente da remoto.")
+    st.info("Configura i tuoi fermentatori, assegna un nome, un numero e scegli se abbinarli a protocolli standard (MQTT, Modbus RTU/TCP, OPC UA, iSpindel o Inkbird bridge).")
 
     sub_iot = st.radio("Sezione:", ["⚙ Configurazione & Aggiunta Fermentatori", "🎛️ Monitoraggio & Controllo Remoto Setpoint", "🧪 Test / Simulatore Telemetria"], horizontal=True)
 
@@ -1087,7 +1080,7 @@ with tab2:
             col_cf1, col_cf2 = st.columns(2)
             with col_cf1:
                 num_t = st.number_input("Numero Progressivo Tank", min_value=1, step=1, value=len(df_conf_fermentatori) + 1)
-                nome_t = st.text_input("Nome Personalizzato Tank", placeholder="es. Tank 01 - Bionda / Cask principale")
+                nome_t = st.text_input("Nome Personalizzato Tank", placeholder="es. Tank 01 - Bionda")
                 cap_t = st.number_input("Capacità Serbatoio (Litri)", min_value=50.0, step=50.0, value=1000.0)
             with col_cf2:
                 proto_t = st.selectbox("Protocollo / Dispositivo Abbinato:", [
@@ -1130,7 +1123,7 @@ with tab2:
                 st.success("Tank rimosso!")
                 st.rerun()
         else:
-            st.info("Nessun fermentatore configurato. Aggiungine uno sopra.")
+            st.info("Nessun fermentatore configurato.")
 
     elif sub_iot == "🎛️ Monitoraggio & Controllo Remoto Setpoint":
         st.markdown("#### 🎛 Dashboard Live & Controllo Remoto Setpoint")
@@ -1152,10 +1145,10 @@ with tab2:
         if not df_live.empty:
             st.dataframe(df_live, use_container_width=True)
         else:
-            st.info("Nessun dato di telemetria ricevuto dai dispositivi.")
+            st.info("Nessun dato di telemetria ricevuto.")
 
         st.write("---")
-        st.markdown("#### ⚙️ Imposta Setpoint Temperatura da Remoto (Invio Comando al Dispositivo)")
+        st.markdown("#### ⚙️ Imposta Setpoint Temperatura da Remoto")
         with st.form("form_setpoint_remoto"):
             if not df_conf_fermentatori.empty:
                 lista_tanks = [f"{r['nome_tank']} (Protocollo: {r['protocollo']})" for _, r in df_conf_fermentatori.iterrows()]
@@ -1179,7 +1172,7 @@ with tab2:
                     st.success(f"Comando inviato! Setpoint impostato a {nuovo_setpoint}°C per {nome_t_pulito}.")
                     st.rerun()
             else:
-                st.warning("Configura prima almeno un fermentatore nella scheda di configurazione.")
+                st.warning("Configura prima almeno un fermentatore.")
 
     else:
         st.markdown("#### 🧪 Simulatore Telemetria per Test Protocolli")
@@ -1215,7 +1208,7 @@ with tab2:
             st.rerun()
 
 # =========================================================================
-# TAB 3: GESTIONE FUSTI NEI PUB & CAUZIONI (AUTOMATIZZATO)
+# TAB 3: GESTIONE FUSTI NEI PUB & CAUZIONI
 # =========================================================================
 with tab3:
     st.subheader("🍻 Tracciamento Fusti & Gestione Cauzioni nei Pub")
@@ -1329,7 +1322,7 @@ with tab4:
                 "Altro Costo Fisso"
             ])
         with col_s2:
-            sp_desc = st.text_input("Descrizione / Fornitore", placeholder="es. Bolletta Enel, Carico GPL...")
+            sp_desc = st.text_input("Descrizione / Fornitore", placeholder="es. Bolletta Enel...")
             sp_importo = st.number_input("Importo Spesa (€ escluso IVA)", min_value=1.0, step=50.0, value=350.0)
         with col_s3:
             sp_qta = st.number_input("Quantità Consumo Rilevata", min_value=0.0, step=10.0, value=0.0)
@@ -1370,7 +1363,7 @@ with tab5:
     quota_fissa_litro = get_incidenza_costi_fissi_litro()
 
     col_cg1, col_cg2 = st.columns(2)
-    col_cg1.metric("Quota Costi Fissi/Utenze", f"€ {quota_fissa_litro:.3f} / LT", help="Ripartizione di tutte le bollette sui litri prodotti")
+    col_cg1.metric("Quota Costi Fissi/Utenze", f"€ {quota_fissa_litro:.3f} / LT")
     col_cg2.metric("Aliquota Accisa Microbirrificio", f"{ALIQUOTA_ACCISA_PLATO:.3f} €/hl/°P")
 
     with get_db_connection() as conn:
@@ -1415,7 +1408,9 @@ with tab5:
     col_res2.metric("Guadagno Netto a Pezzo", f"€ {margine_netto_euro:.2f}", delta=f"+{margine_netto_euro:.2f} €")
     col_res3.metric("Margine di Profitto", f"{margine_perc:.1f}%")
 
+# =========================================================================
 # TAB 6: ACQUISTI XML
+# =========================================================================
 with tab6:
     st.subheader("Carico Automatico Materie Prime da Fatture XML Fornitori")
     up_xmls = st.file_uploader("Seleziona i file XML fornitori", type=["xml"], accept_multiple_files=True, key="xml_acquisti")
@@ -1486,7 +1481,9 @@ with tab6:
         """, conn)
     st.dataframe(df_mp_mov, use_container_width=True)
 
+# =========================================================================
 # TAB 7: IMBALLAGGI
+# =========================================================================
 with tab7:
     st.subheader("Carico Imballaggi")
     with st.form("imb_form"):
@@ -1518,7 +1515,9 @@ with tab7:
         """, conn)
         st.dataframe(df_imb, use_container_width=True)
 
+# =========================================================================
 # TAB 8: CONFEZIONAMENTO MISTO
+# =========================================================================
 with tab8:
     st.subheader("📦 Confezionamento Misto Cotta (Fusti e Bottiglie)")
     with get_db_connection() as conn:
@@ -1595,7 +1594,9 @@ with tab8:
                 st.success(f"Confezionamento registrato! Caricati {litri_effettivi:.1f} LT a magazzino.")
                 st.rerun()
 
+# =========================================================================
 # TAB 9: VENDITE XML E MANUALI
+# =========================================================================
 with tab9:
     st.subheader("🚚 Scarico Vendite Birra (Fatture XML & Manuale)")
     up_vendite_xml = st.file_uploader("Trascina qui le fatture XML emesse", type=["xml"], accept_multiple_files=True, key="xml_vendite")
@@ -1662,7 +1663,9 @@ with tab9:
             st.success("Scarico birra registrato!")
             st.rerun()
 
+# =========================================================================
 # TAB 10: GIACENZE MAGAZZINO
+# =========================================================================
 with tab10:
     st.subheader("🏛 Giacenze Magazzino Prodotti Finiti")
     with get_db_connection() as conn:
@@ -1702,7 +1705,9 @@ with tab10:
                     st.success("Movimento eliminato!")
                     st.rerun()
 
+# =========================================================================
 # TAB 11: REPORT 31/12 & DOGANE
+# =========================================================================
 with tab11:
     st.subheader("📑 Report di Chiusura Esercizio: Bilancio Dogane & Commercialista")
     
@@ -1764,7 +1769,7 @@ with tab11:
     l_acq_tot = float(df_mp_acq.iloc[0]["luppolo_acq"])
     y_acq_tot_gr = float(df_mp_acq.iloc[0]["lievito_acq"]) * 1000.0
 
-    st.markdown(f"### 🏛️ 1. Prospetto Bilancio Dogane Esercizio {anno_bilancio} (Invio entro 31 Gennaio)")
+    st.markdown(f"### 🏛️ 1. Prospetto Bilancio Dogane Esercizio {anno_bilancio}")
     b_col1, b_col2, b_col3 = st.columns(3)
     b_col1.metric("Cotte Realizzate", f"{cotte_tot_n}")
     b_col2.metric("Litri Mosto Prodotti", f"{litri_tot_cotte:,.1f} LT")

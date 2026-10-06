@@ -533,12 +533,13 @@ if not st.session_state["autenticato"]:
             st.image(LOGO_FILENAME, width=120)
         st.title("🔒 BrewDesk — Accesso Piattaforma Pro")
 
-        with get_db_connection() as conn:
-            with conn.cursor() as c:
-                c.execute("SELECT COUNT(*) FROM utenti;")
-                utenti_presenti = int(c.fetchone()[0] or 0)
-
-        if utenti_presenti == 0:
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as c:
+                    c.execute("SELECT COUNT(*) FROM utenti;")
+                    utenti_presenti = int(c.fetchone()[0] or 0)
+        except Exception:
+            utenti_presenti = 0
             st.info("Prima configurazione: crea il primo account aziendale. Non esiste alcun amministratore preimpostato.")
 
         tab_log_1, tab_log_2 = st.tabs(["🔑 Accedi", "📝 Registra Nuova Azienda / Utente"])

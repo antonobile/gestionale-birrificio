@@ -540,16 +540,64 @@ if not st.session_state["autenticato"]:
                     utenti_presenti = int(c.fetchone()[0] or 0)
         except Exception:
             utenti_presenti = 0
-            st.info("Prima configurazione: crea il primo account aziendale. Non esiste alcun amministratore preimpostato.")
+         # --- PANNELLO DI ACCESSO INTEGRATO SULLA LANDING ---
+    col_i1, col_i2, col_i3 = st.columns([1, 2, 1])
+    with col_i2:
+        st.markdown("""
+            <div style="background: rgba(255, 255, 255, 0.85); padding: 1.5rem; border-radius: 1rem; border: 1px solid rgba(245, 158, 11, 0.3); backdrop-filter: blur(10px); box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05);">
+        """, unsafe_allow_html=True)
+        
+        if utenti_presenti == 0:
+            st.info("👋 Nessun account trovato. Registra la prima azienda.")
+            tab_scelta = ["Registrazione Admin"]
+        else:
+            tab_scelta = ["Accedi", "Registra Nuova Azienda"]
 
-        tab_log_1, tab_log_2 = st.tabs(["🔑 Accedi", "📝 Registra Nuova Azienda / Utente"])
-
-        with tab_log_1:
-            with st.form("login_form"):
-                username_inserito = st.text_input("Nome Utente / Username", value="")
+        scelta = st.radio("Seleziona modalità", tab_scelta, horizontal=True, label_visibility="collapsed")
+        
+        if scelta == "Accedi":
+            with st.form("login_form_integrato"):
+                username_inserito = st.text_input("Nome Utente / Username")
                 pwd_inserita = st.text_input("Password di Accesso", type="password")
-                btn_login = st.form_submit_button("Accedi al Gestionale", type="primary")
+                btn_login = st.form_submit_button("🚀 Entrata in Cantina", use_container_width=True, type="primary")
+                
                 if btn_login:
+                    username_norm = username_inserito.strip()
+                    with get_db_connection() as conn:
+                        with conn.cursor() as c:
+                            c.execute("SELECT id, azienda_id, password FROM utenti WHERE username = %s;", (username_norm,))
+                            row = c.fetchone()
+                            if row and verify_password(pwd_inserita, row[2]):
+                                st.session_state["autenticato"] = True
+                                st.session_state["user_id"] = row[0]
+                                st.session_state["azienda_id"] = row[1]
+                                st.success("Accesso effettuato con successo!")
+                                st.rerun()
+                            else:
+                                st.error("Credenziali non valide.")
+        else:
+            with st.form("registrazione_form_integrato"):
+                nuova_azienda = st.text_input("Nome Azienda / Birrificio")
+                nuovo_user = st.text_input("Username Admin")
+                nuova_pwd = st.text_input("Password", type="password")
+                btn_reg = st.form_submit_button("Registra Azienda e Account", use_container_width=True)
+                
+                if btn_reg:
+                    if not nuova_azienda or not nuovo_user or not nuova_pwd:
+                        st.warning("Compila tutti i campi.")
+                    else:
+                        pwd_hash = hash_password(nuova_pwd)
+                        with get_db_connection() as conn:
+                            with conn.cursor() as c:
+                                c.execute("INSERT INTO aziende (ragione_sociale) VALUES (%s) RETURNING id;", (nuova_azienda.strip(),))
+                                az_id = c.fetchone()[0]
+                                c.execute("INSERT INTO utenti (azienda_id, username, password, ruolo) VALUES (%s, %s, %s, 'admin');", 
+                                          (az_id, nuovo_user.strip(), pwd_hash))
+                                conn.commit()
+                                st.success("Azienda registrata! Ora puoi effettuare l'accesso.")
+                                st.rerun()
+                
+        st.markdown("</div>", unsafe_allow_html=True)
                     username_norm = username_inserito.strip()
                     with get_db_connection() as conn:
                         with conn.cursor() as c:

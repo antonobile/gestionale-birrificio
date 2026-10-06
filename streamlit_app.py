@@ -3647,8 +3647,7 @@ with tab9:
                 FROM birra_condizionata
                 WHERE tipo='CARICO' AND litri_totali > 0 AND azienda_id = %s;
             """, (st.session_state["azienda_id"],))
-                costo_medio_stock_litro = float(c.fetchone()[0] or 1.10)
-
+               costo_medio_stock_litro = float(c.fetchone()[0] or 1.10)
                 for up_xml in up_vendite_xml:
                     try:
                         content = up_xml.read()

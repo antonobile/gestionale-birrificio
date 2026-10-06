@@ -553,63 +553,13 @@ if not st.session_state["autenticato"]:
         else:
             tab_scelta = ["Accedi", "Registra Nuova Azienda"]
 
-        scelta = st.radio("Seleziona modalità", tab_scelta, horizontal=True, label_visibility="collapsed")
-        
-        if scelta == "Accedi":
-            with st.form("login_form_integrato"):
-                username_inserito = st.text_input("Nome Utente / Username")
-                pwd_inserita = st.text_input("Password di Accesso", type="password")
-                btn_login = st.form_submit_button("🚀 Entrata in Cantina", use_container_width=True, type="primary")
-                
-                if btn_login:
-                    username_norm = username_inserito.strip()
-                    with get_db_connection() as conn:
-                        with conn.cursor() as c:
-                            c.execute("SELECT id, azienda_id, password FROM utenti WHERE username = %s;", (username_norm,))
-                            row = c.fetchone()
-                            if row and verify_password(pwd_inserita, row[2]):
-                                st.session_state["autenticato"] = True
-                                st.session_state["user_id"] = row[0]
-                                st.session_state["azienda_id"] = row[1]
-                                st.success("Accesso effettuato con successo!")
-                                st.rerun()
-                            else:
-                                st.error("Credenziali non valide.")
-        else:
-            with st.form("registrazione_form_integrato"):
-                nuova_azienda = st.text_input("Nome Azienda / Birrificio")
-                nuovo_user = st.text_input("Username Admin")
-                nuova_pwd = st.text_input("Password", type="password")
-                btn_reg = st.form_submit_button("Registra Azienda e Account", use_container_width=True)
-                
-                if btn_reg:
-                    if not nuova_azienda or not nuovo_user or not nuova_pwd:
-                        st.warning("Compila tutti i campi.")
-                    else:
-                        pwd_hash = hash_password(nuova_pwd)
-                        with get_db_connection() as conn:
-                            with conn.cursor() as c:
-                                c.execute("INSERT INTO aziende (ragione_sociale) VALUES (%s) RETURNING id;", (nuova_azienda.strip(),))
-                                az_id = c.fetchone()[0]
-                                c.execute("INSERT INTO utenti (azienda_id, username, password, ruolo) VALUES (%s, %s, %s, 'admin');", 
-                                          (az_id, nuovo_user.strip(), pwd_hash))
-                                conn.commit()
-                                st.success("Azienda registrata! Ora puoi effettuare l'accesso.")
-                                st.rerun()
-                
-        if utenti_presenti == 0:
-            st.info("👋 Nessun account trovato. Registra la prima azienda.")
-            tab_scelta = ["Registrazione Admin"]
-        else:
-            tab_scelta = ["Accedi", "Registra Nuova Azienda"]
-
-        scelta = st.radio("Seleziona modalità", tab_scelta, horizontal=True, label_visibility="collapsed", key="scelta_modalita_login")
+        scelta = st.radio("Seleziona modalità", tab_scelta, horizontal=True, label_visibility="collapsed", key="scelta_modalita_principale")
         
         if scelta == "Accedi" or scelta == "Registrazione Admin":
-            with st.form("login_form_integrato"):
-                username_inserito = st.text_input("Nome Utente / Username", key="input_user_login")
-                pwd_inserita = st.text_input("Password di Accesso", type="password", key="input_pwd_login")
-                btn_login = st.form_submit_button("🚀 Entrata in Cantina", use_container_width=True, type="primary")
+            with st.form("form_login_pulito"):
+                username_inserito = st.text_input("Nome Utente / Username", key="user_login_unico")
+                pwd_inserita = st.text_input("Password di Accesso", type="password", key="pwd_login_unico")
+                btn_login = st.form_submit_button("Accedi", use_container_width=True, type="primary")
                 
                 if btn_login:
                     username_norm = username_inserito.strip()
@@ -630,11 +580,11 @@ if not st.session_state["autenticato"]:
                     else:
                         st.error("Credenziali non valide. Verifica Nome Utente e Password.")
         else:
-            with st.form("form_registrazione_azienda"):
-                reg_user = st.text_input("Scegli Username *", key="reg_user_input")
-                reg_pwd = st.text_input("Scegli Password *", type="password", key="reg_pwd_input")
-                reg_ragione = st.text_input("Ragione Sociale Birrificio *", placeholder="es. Birrificio Artigianale...", key="reg_ragione_input")
-                reg_piva = st.text_input("Partita IVA *", placeholder="es. 01234567890", key="reg_piva_input")
+            with st.form("form_registrazione_pulito"):
+                reg_user = st.text_input("Scegli Username *", key="reg_user_unico")
+                reg_pwd = st.text_input("Scegli Password *", type="password", key="reg_pwd_unico")
+                reg_ragione = st.text_input("Ragione Sociale Birrificio *", placeholder="es. Birrificio Artigianale...", key="reg_ragione_unico")
+                reg_piva = st.text_input("Partita IVA *", placeholder="es. 01234567890", key="reg_piva_unico")
                 btn_reg = st.form_submit_button("Registra Azienda e Accedi", type="primary")
                 
                 if btn_reg:
@@ -667,7 +617,7 @@ if not st.session_state["autenticato"]:
                             st.success("Registrazione completata con successo! Benvenuto in BrewDesk.")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Errore durante la registrazione. Username o Partita IVA potrebbero essere già presenti: {e}")
+                            st.error(f"Errore durante la registrazione: {e}")
                             
         st.markdown("</div>", unsafe_allow_html=True)
 

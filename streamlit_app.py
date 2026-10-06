@@ -3639,16 +3639,17 @@ with tab9:
         tot_scarichi, tot_litri = 0, 0.0
         with get_db_connection() as conn:
             with conn.cursor() as c:
-              c.execute("""
-                SELECT COALESCE(
-                    SUM(litri_totali * costo_produzione_litro) / NULLIF(SUM(litri_totali), 0),
-                    1.10
-                )
-                FROM birra_condizionata
-                WHERE tipo='CARICO' AND litri_totali > 0 AND azienda_id = %s;
-            """, (st.session_state["azienda_id"],))
-            costo_medio_stock_litro = float(c.fetchone()[0] or 1.10)
-            for up_xml in up_vendite_xml:
+                c.execute("""
+                    SELECT COALESCE(
+                        SUM(litri_totali * costo_produzione_litro) / NULLIF(SUM(litri_totali), 0),
+                        1.10
+                    )
+                    FROM birra_condizionata
+                    WHERE tipo='CARICO' AND litri_totali > 0 AND azienda_id = %s;
+                """, (st.session_state["azienda_id"],))
+                costo_medio_stock_litro = float(c.fetchone()[0] or 1.10)
+                
+                for up_xml in up_vendite_xml:
                     try:
                         content = up_xml.read()
                         root = ET.fromstring(content)
@@ -3658,7 +3659,7 @@ with tab9:
                         data_doc = trova_testo_nodo(root, ["Data"]) or oggi_it().strftime("%Y-%m-%d")
                         rif_vendita = f"Fatt. {num_doc} - {cliente}"
 
-                        c.execute("SELECT id FROM birra_condizionata WHERE documento_rif=%s LIMIT 1;", (rif_vendita,))
+                        c.execute("SELECT id FROM birra_condizionata WHERE documento_rif=%s AND azienda_id=%s LIMIT 1;", (rif_vendita, st.session_state["azienda_id"]))
                         if c.fetchone():
                             st.warning(f"⚠️ Fattura {num_doc} già elaborata! Saltata.")
                             continue
@@ -3678,13 +3679,13 @@ with tab9:
                                     )
                                     tot_scarichi += 1
                                     tot_litri += litri_r
-        
+                    except Exception as e:
+                        st.error(f"Errore durante l'elaborazione del file XML: {e}")
 
-    if tot_scarichi > 0:
-        invalidate_caches()
-        st.success(f"Registrati {tot_scarichi} scarichi per {tot_litri:.1f} Litri!")
-        st.rerun()
-
+        if tot_scarichi > 0:
+            invalidate_caches()
+            st.success(f"Registrati {tot_scarichi} scarichi per {tot_litri:.1f} Litri!")
+            st.rerun()
 # =========================================================================
 # TAB 10: GIACENZE MAGAZZINO
 # =========================================================================

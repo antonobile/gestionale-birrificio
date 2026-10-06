@@ -3672,7 +3672,7 @@ with tab9:
                                 if b_info:
                                     fmt_v, lt_un = b_info
                                     litri_r = qta * lt_un
-                                  c.execute("INSERT INTO birra_condizionata (azienda_id, tipo, data, lotto, formato, quantita, litri_totali, grado_plato, ettogradi, costo_produzione_litro, documento_rif) VALUES (%s, 'SCARICO', %s, %s, %s, %s, %s, %s, %s, %s, %s);", (st.session_state["azienda_id"], data_mov, lotto_s, fmt_s, qta_s, litri_s, plato_s, ettogradi_s, costo_l_s, doc_rif_s))
+                                c.execute("INSERT INTO birra_condizionata (azienda_id, tipo, data, lotto, formato, quantita, litri_totali, grado_plato, ettogradi, costo_produzione_litro, documento_rif) VALUES (%s, 'SCARICO', %s, %s, %s, %s, %s, %s, %s, %s, %s);", (st.session_state["azienda_id"], data_mov, lotto_s, fmt_s, qta_s, litri_s, plato_s, ettogradi_s, costo_l_s, doc_rif_s))
                                 VALUES (%s, 'SCARICO', %s, '-', %s, %s, %s, %s, %s);
                             """, (st.session_state["azienda_id"], data_doc, fmt_v, qta, litri_r, p_un, rif_vendita))
                                     tot_scarichi += 1

@@ -547,129 +547,356 @@ if not st.session_state["autenticato"]:
     # Se l'utente non è autenticato
     if not st.session_state.get("autenticato", False):
         
-        # 1. SCHERMATA VETRINA INIZIALE (LANDING PAGE PURA)
-        if not st.session_state["mostra_form_accesso"]:
-            st.markdown("""
-                <div style="background-color: #1e1e1e; padding: 60px 20px; border-radius: 12px; text-align: center; color: white; margin-top: 40px; margin-bottom: 30px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
-                    <h1 style="color: #f58220; font-size: 3rem; margin-bottom: 10px;">🍺 BrewDesk</h1>
-                    <p style="font-size: 1.25rem; color: #cccccc; max-width: 600px; margin: 0 auto 30px auto;">Il sistema operativo definitivo per il tuo birrificio artigianale.</p>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                if st.button("🚀 Accedi o Registrati al Gestionale", use_container_width=True, type="primary"):
-                    st.session_state["mostra_form_accesso"] = True
-                    st.rerun()
-            st.stop()
-        
-        # 2. PANNELLO DI ACCESSO DEDICATO (LA VETRINA SPARISCE COMPLETAMENTE)
+     # =========================================================================
+# ACCESSO, REGISTRAZIONE AZIENDE, VETRINA E BARRA LATERALE
+# Sostituisce interamente i blocchi originali:
+#   "# --- PROTEZIONE ACCESSO & REGISTRAZIONE AZIENDE ---"
+#   "# --- BARRA LATERALE ---"
+# Va incollato a livello di modulo (nessuna indentazione), DOPO la chiamata init_db().
+# Blocco autonomo: definisce da solo hash/verifica password, migrazione della
+# tabella utenti e tutto quello che serve alla schermata di accesso.
+# =========================================================================
+import hmac
+import secrets
+import time
+
+# --- Impostazioni -----------------------------------------------------------
+PREFISSO_HASH = "pbkdf2_sha256"
+ITERAZIONI_HASH = 600_000            # indicazione OWASP per PBKDF2-HMAC-SHA256
+PASSWORD_MIN_LUNGHEZZA = 10
+MAX_TENTATIVI_LOGIN = 5              # dopo 5 errori, blocco temporaneo
+BLOCCO_LOGIN_SECONDI = 60
+RITARDO_ERRORE_LOGIN = 0.8           # piccolo ritardo dopo ogni errore
+PASSWORD_DEMO_VECCHIE_VERSIONI = "BirraNobile2026!"   # password di esempio delle vecchie versioni: va cambiata
+URL_PRIVACY = ""                     # es. "https://tuosito.it/privacy" (consigliato prima di vendere)
+URL_TERMINI = ""                     # es. "https://tuosito.it/termini"
+URL_SITO_VETRINA = ""                # es. la tua landing page; se vuoto il link non compare
+
+
+# --- Password: hash con sale (solo libreria standard) ------------------------
+def hash_password(password: str) -> str:
+    sale = secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), sale, ITERAZIONI_HASH)
+    return f"{PREFISSO_HASH}${ITERAZIONI_HASH}${sale.hex()}${dk.hex()}"
+
+
+def verify_password(password: str, memorizzata: str) -> bool:
+    memorizzata = memorizzata or ""
+    if memorizzata.startswith(PREFISSO_HASH + "$"):
+        try:
+            _, iterazioni, sale_hex, hash_hex = memorizzata.split("$")
+            dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(sale_hex), int(iterazioni))
+            return hmac.compare_digest(dk, bytes.fromhex(hash_hex))
+        except Exception:
+            return False
+    # Compatibilita' con vecchi record in chiaro: dopo il primo accesso vengono convertiti in hash.
+    return hmac.compare_digest(memorizzata.encode("utf-8"), password.encode("utf-8"))
+
+
+# --- Validazioni -------------------------------------------------------------
+def piva_valida(piva: str) -> bool:
+    """Partita IVA italiana: 11 cifre con cifra di controllo."""
+    if not re.fullmatch(r"\d{11}", piva or ""):
+        return False
+    somma = 0
+    for i, ch in enumerate(piva[:10]):
+        d = int(ch)
+        if i % 2 == 1:
+            d *= 2
+            if d > 9:
+                d -= 9
+        somma += d
+    return (10 - somma % 10) % 10 == int(piva[10])
+
+
+def username_valido(username: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9._@\-]{3,40}", username or ""))
+
+
+def controlla_password_nuova(password: str, conferma: str, username: str = ""):
+    """Ritorna il messaggio di errore, oppure None se la password va bene."""
+    if len(password) < PASSWORD_MIN_LUNGHEZZA:
+        return f"La password deve avere almeno {PASSWORD_MIN_LUNGHEZZA} caratteri."
+    if password != conferma:
+        return "Le due password non coincidono."
+    if username and password.lower() == username.lower():
+        return "La password non può essere uguale al nome utente."
+    return None
+
+
+# --- Database utenti -----------------------------------------------------------
+def _auth_leggi(sql, params=None):
+    with get_db_connection() as conn:
+        with conn.cursor() as c:
+            c.execute(sql, params)
+            return c.fetchall()
+
+
+def _auth_scrivi(sql, params=None):
+    with get_db_connection() as conn:
+        with conn.cursor() as c:
+            c.execute(sql, params)
+        conn.commit()
+
+
+@st.cache_resource
+def init_auth_db():
+    """Migrazione una tantum: colonne azienda_id/ruolo e conversione delle password in chiaro in hash."""
+    with get_db_connection() as conn:
+        with conn.cursor() as c:
+            c.execute("SELECT pg_advisory_xact_lock(727401);")   # evita corse tra piu' istanze Cloud Run
+            c.execute("ALTER TABLE utenti ADD COLUMN IF NOT EXISTS azienda_id TEXT;")
+            c.execute("ALTER TABLE utenti ADD COLUMN IF NOT EXISTS ruolo TEXT DEFAULT 'admin';")
+            c.execute("ALTER TABLE utenti ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+            c.execute("UPDATE utenti SET azienda_id = COALESCE(NULLIF(TRIM(piva), ''), 'azienda-' || id::text) "
+                      "WHERE azienda_id IS NULL OR azienda_id = '';")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_utenti_azienda ON utenti(azienda_id);")
+            c.execute("SELECT id, password FROM utenti WHERE password IS NULL OR password NOT LIKE %s;", (PREFISSO_HASH + "$%",))
+            for uid, pwd in c.fetchall():
+                # password vuota o mancante: la rendiamo inutilizzabile (si potrà reimpostare)
+                c.execute("UPDATE utenti SET password=%s WHERE id=%s;", (hash_password(pwd or secrets.token_hex(16)), uid))
+        conn.commit()
+    return True
+
+
+# --- Stato sessione ------------------------------------------------------------
+for _k, _v in (("autenticato", False), ("utente_connesso", ""), ("mostra_form_accesso", False)):
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
+
+try:
+    init_auth_db()
+except Exception as _e_auth:
+    st.error(f"Impossibile preparare la tabella utenti: {_e_auth}")
+    st.stop()
+
+
+def _apri_sessione(riga):
+    """riga = (id, username, ragione_sociale, piva, azienda_id, ruolo)"""
+    st.session_state["autenticato"] = True
+    st.session_state["user_id"] = riga[0]
+    st.session_state["utente_connesso"] = riga[1]
+    st.session_state["ragione_sociale"] = riga[2] or ""
+    st.session_state["piva_azienda"] = riga[3] or ""
+    st.session_state["azienda_id"] = riga[4] or riga[3] or ""
+    st.session_state["ruolo"] = riga[5] or "admin"
+
+
+# --- Vetrina e schermata di accesso ------------------------------------------------
+def mostra_vetrina():
+    st.markdown(
+        "<div style='background:#2A1C16;color:#F5F5EC;padding:52px 32px 40px;border-radius:12px;margin-top:24px'>"
+        "<div style='font-size:1rem;color:#F6DC8C;font-weight:600;margin-bottom:10px'>🍺 BrewDesk</div>"
+        "<h1 style='color:#F5F5EC;font-size:2.6rem;line-height:1.1;margin:0 0 14px;padding:0;max-width:16em'>"
+        "Cotte, accise e scadenze del tuo birrificio, in ordine.</h1>"
+        "<p style='font-size:1.15rem;color:#D9CFC4;max-width:34em;margin:0'>Il gestionale per i birrifici artigianali italiani: "
+        "registro cotte, magazzino, fusti nei pub, bollette e report per le Dogane in un solo posto.</p>"
+        "</div>"
+        "<div style='height:10px;border-radius:0 0 8px 8px;background:linear-gradient(90deg,#FFE699,#FFD878,#FFBF42,#FBB123,#F39C00,#DE7C00,#CB6200,#A63C00,#8E2900,#5D1B05,#2A0D04)'></div>",
+        unsafe_allow_html=True,
+    )
+    st.write("")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown("**In produzione**\n\nRegistro cotte (Allegato I), ricette, sanificazione e pianificatore cotte con calendario.")
+    with c2:
+        st.markdown("**In magazzino e in vendita**\n\nAcquisti da fattura XML, confezionamento, fusti nei pub, costo reale e margini.")
+    with c3:
+        st.markdown("**Carte e scadenze**\n\nBollette, scadenze e promemoria, annotazioni rapide e report del 31/12.")
+    st.write("")
+    _, centro, _ = st.columns([1, 2, 1])
+    with centro:
+        if st.button("Accedi o registra il tuo birrificio", use_container_width=True, type="primary", key="btn_vai_accesso"):
+            st.session_state["mostra_form_accesso"] = True
+            st.rerun()
+        if URL_SITO_VETRINA:
+            st.markdown(f"<div style='text-align:center'><a href='{URL_SITO_VETRINA}' target='_blank' rel='noopener'>Scopri di più su BrewDesk</a></div>", unsafe_allow_html=True)
+
+
+def mostra_accesso():
+    _, centro, _ = st.columns([1, 2, 1])
+    with centro:
+        if os.path.exists(LOGO_FILENAME):
+            st.image(LOGO_FILENAME, width=90)
+        st.title("Area riservata BrewDesk")
+
+        utenti_presenti = _auth_leggi("SELECT COUNT(*) FROM utenti;")[0][0]
+        if utenti_presenti == 0:
+            st.info("Nessun account presente: registra il primo birrificio, che diventerà amministratore.")
+            tab_login = None
+            (tab_reg,) = st.tabs(["Registra il tuo birrificio"])
         else:
-            st.markdown("""
-                <div style="text-align: center; margin-top: 30px; margin-bottom: 25px;">
-                    <h2 style="color: #f58220;">Area Riservata - BrewDesk</h2>
-                    <p style="color: #666;">Inserisci le tue credenziali o registra la tua azienda</p>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            col_A, col_B, col_C = st.columns([1, 2, 1])
-            with col_B:
-                if utenti_presenti == 0:
-                    st.info("👋 Nessun account trovato. Registra la prima azienda.")
-                    tab_scelta = ["Registrazione Admin"]
-                else:
-                    tab_scelta = ["Accedi", "Registra Nuova Azienda"]
+            tab_login, tab_reg = st.tabs(["Accedi", "Registra il tuo birrificio"])
 
-                scelta = st.radio("Seleziona modalità", tab_scelta, horizontal=True, label_visibility="collapsed", key="scelta_modalita_principale")
-                
-                if scelta == "Accedi" or scelta == "Registrazione Admin":
-                    with st.form("form_login_pulito"):
-                        username_inserito = st.text_input("Nome Utente / Username", key="user_login_unico")
-                        pwd_inserita = st.text_input("Password di Accesso", type="password", key="pwd_login_unico")
-                        btn_login = st.form_submit_button("Accedi al Gestionale", use_container_width=True, type="primary")
-                        
-                        if btn_login:
-                            username_norm = username_inserito.strip()
-                            with get_db_connection() as conn:
-                                with conn.cursor() as c:
-                                    c.execute("""
-                                        SELECT id, username, password, ragione_sociale, piva, azienda_id
-                                        FROM utenti WHERE username=%s LIMIT 1;
-                                    """, (username_norm,))
-                                    user_row = c.fetchone()
-                            if user_row and verify_password(pwd_inserita, user_row[2]):
-                                st.session_state["autenticato"] = True
-                                st.session_state["utente_connesso"] = user_row[1]
-                                st.session_state["ragione_sociale"] = user_row[3] or ""
-                                st.session_state["piva_azienda"] = user_row[4] or ""
-                                st.session_state["azienda_id"] = user_row[5] or user_row[4] or ""
-                                st.rerun()
-                            else:
-                                st.error("Credenziali non valide. Verifica Nome Utente e Password.")
-                else:
-                    with st.form("form_registrazione_pulito"):
-                        reg_user = st.text_input("Scegli Username *", key="reg_user_unico")
-                        reg_pwd = st.text_input("Scegli Password *", type="password", key="reg_pwd_unico")
-                        reg_ragione = st.text_input("Ragione Sociale Birrificio *", placeholder="es. Birrificio Artigianale...", key="reg_ragione_unico")
-                        reg_piva = st.text_input("Partita IVA *", placeholder="es. 01234567890", key="reg_piva_unico")
-                        btn_reg = st.form_submit_button("Registra Azienda e Accedi", type="primary", use_container_width=True)
-                        
-                        if btn_reg:
-                            reg_user = reg_user.strip()
-                            reg_ragione = reg_ragione.strip()
-                            reg_piva = re.sub(r"\s+", "", reg_piva.strip())
-                            if not (reg_user and reg_pwd and reg_ragione and reg_piva):
-                                st.error("Tutti i campi contrassegnati sono obbligatori.")
-                            elif len(reg_pwd) < 10:
-                                st.error("Per sicurezza usa una password di almeno 10 caratteri.")
-                            elif len(reg_piva) not in (11, 16):
-                                st.error("Inserisci una Partita IVA/codice identificativo valido.")
-                            else:
-                                try:
-                                    password_hash = hash_password(reg_pwd)
-                                    with get_db_connection() as conn:
-                                        with conn.cursor() as c:
-                                            c.execute("""
-                                                INSERT INTO utenti (username, password, ragione_sociale, piva, azienda_id)
-                                                VALUES (%s, %s, %s, %s, %s)
-                                                RETURNING id;
-                                            """, (reg_user, password_hash, reg_ragione, reg_piva, reg_piva))
-                                            c.fetchone()
-                                        conn.commit()
-                                    st.session_state["autenticato"] = True
-                                    st.session_state["utente_connesso"] = reg_user
-                                    st.session_state["ragione_sociale"] = reg_ragione
-                                    st.session_state["piva_azienda"] = reg_piva
-                                    st.session_state["azienda_id"] = reg_piva
-                                    st.success("Registrazione completata con successo! Benvenuto in BrewDesk.")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Errore durante la registrazione: {e}")
-                
-                # Pulsante per tornare alla vetrina iniziale
-                if st.button("⬅ Torna alla Vetrina", use_container_width=True):
-                    st.session_state["mostra_form_accesso"] = False
-                    st.rerun()
-                    
-            st.stop()
+        # ---- Accesso ----
+        if tab_login is not None:
+            with tab_login:
+                with st.form("form_login"):
+                    username = st.text_input("Nome utente", key="login_username")
+                    password = st.text_input("Password", type="password", key="login_password")
+                    invia = st.form_submit_button("Accedi", use_container_width=True, type="primary")
+                if invia:
+                    username = username.strip()
+                    residuo = st.session_state.get("login_blocco_fino", 0) - time.time()
+                    if residuo > 0:
+                        st.error(f"Troppi tentativi errati. Riprova tra {int(residuo) + 1} secondi.")
+                    elif not username or not password:
+                        st.error("Inserisci nome utente e password.")
+                    else:
+                        righe = _auth_leggi(
+                            "SELECT id, username, ragione_sociale, piva, azienda_id, ruolo, password FROM utenti "
+                            "WHERE LOWER(username)=LOWER(%s) ORDER BY (username=%s) DESC LIMIT 1;",
+                            (username, username),
+                        )
+                        riga = righe[0] if righe else None
+                        if riga is None:
+                            hash_password("x" + password)    # tempi di risposta simili anche per utenti inesistenti
+                            valido = False
+                        else:
+                            valido = verify_password(password, riga[6])
+                        if valido:
+                            if not (riga[6] or "").startswith(PREFISSO_HASH + "$"):
+                                _auth_scrivi("UPDATE utenti SET password=%s WHERE id=%s;", (hash_password(password), riga[0]))
+                            st.session_state["login_errori"] = 0
+                            st.session_state["login_blocco_fino"] = 0
+                            st.session_state["password_di_default"] = (password == PASSWORD_DEMO_VECCHIE_VERSIONI)
+                            _apri_sessione(riga[:6])
+                            st.rerun()
+                        else:
+                            errori = st.session_state.get("login_errori", 0) + 1
+                            st.session_state["login_errori"] = errori
+                            if errori >= MAX_TENTATIVI_LOGIN:
+                                st.session_state["login_errori"] = 0
+                                st.session_state["login_blocco_fino"] = time.time() + BLOCCO_LOGIN_SECONDI
+                            time.sleep(RITARDO_ERRORE_LOGIN)
+                            st.error("Nome utente o password non corretti.")
 
-# Dopo il login questi valori diventano dinamici per report, sidebar e documenti.
+        # ---- Registrazione ----
+        with tab_reg:
+            with st.form("form_registrazione"):
+                reg_ragione = st.text_input("Ragione sociale del birrificio *", key="reg_ragione", placeholder="es. Birrificio Artigianale Rossi")
+                reg_piva = st.text_input("Partita IVA *", key="reg_piva", placeholder="11 cifre")
+                reg_user = st.text_input("Scegli un nome utente *", key="reg_user", help="Da 3 a 40 caratteri: lettere, numeri, . _ @ -")
+                reg_pwd = st.text_input("Scegli una password *", type="password", key="reg_pwd", help=f"Almeno {PASSWORD_MIN_LUNGHEZZA} caratteri.")
+                reg_pwd2 = st.text_input("Ripeti la password *", type="password", key="reg_pwd2")
+                note_legali = []
+                if URL_PRIVACY:
+                    note_legali.append(f"[Informativa privacy]({URL_PRIVACY})")
+                if URL_TERMINI:
+                    note_legali.append(f"[Termini del servizio]({URL_TERMINI})")
+                etichetta_accetto = "Ho letto e accetto " + (" e ".join(note_legali) if note_legali else "i termini del servizio e l'informativa privacy")
+                reg_accetto = st.checkbox(etichetta_accetto, key="reg_accetto")
+                invia_reg = st.form_submit_button("Registra il birrificio e accedi", use_container_width=True, type="primary")
+            if invia_reg:
+                reg_ragione = reg_ragione.strip()
+                reg_user = reg_user.strip()
+                reg_piva = re.sub(r"\s+", "", reg_piva or "")
+                if not (reg_ragione and reg_piva and reg_user and reg_pwd):
+                    st.error("Compila tutti i campi contrassegnati con *.")
+                elif not piva_valida(reg_piva):
+                    st.error("La Partita IVA non è valida: servono 11 cifre con cifra di controllo corretta.")
+                elif not username_valido(reg_user):
+                    st.error("Il nome utente deve avere da 3 a 40 caratteri: lettere, numeri, . _ @ -")
+                elif controlla_password_nuova(reg_pwd, reg_pwd2, reg_user):
+                    st.error(controlla_password_nuova(reg_pwd, reg_pwd2, reg_user))
+                elif not reg_accetto:
+                    st.error("Per registrarti devi accettare i termini e l'informativa privacy.")
+                elif _auth_leggi("SELECT 1 FROM utenti WHERE LOWER(username)=LOWER(%s) LIMIT 1;", (reg_user,)):
+                    st.error("Questo nome utente è già in uso: scegline un altro.")
+                elif _auth_leggi("SELECT 1 FROM utenti WHERE piva=%s LIMIT 1;", (reg_piva,)):
+                    st.error("Questa Partita IVA risulta già registrata. Chiedi un accesso al responsabile del tuo birrificio: "
+                             "può aggiungerti come operatore dalla barra laterale.")
+                else:
+                    try:
+                        _auth_scrivi(
+                            "INSERT INTO utenti (username, password, ragione_sociale, piva, azienda_id, ruolo) "
+                            "VALUES (%s, %s, %s, %s, %s, 'admin');",
+                            (reg_user, hash_password(reg_pwd), reg_ragione, reg_piva, reg_piva),
+                        )
+                        nuovo = _auth_leggi("SELECT id, username, ragione_sociale, piva, azienda_id, ruolo FROM utenti "
+                                            "WHERE username=%s LIMIT 1;", (reg_user,))[0]
+                        st.session_state["password_di_default"] = False
+                        _apri_sessione(nuovo)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Registrazione non riuscita: {e}")
+
+        if st.button("Torna alla vetrina", use_container_width=True, key="btn_torna_vetrina"):
+            st.session_state["mostra_form_accesso"] = False
+            st.rerun()
+
+
+if not st.session_state["autenticato"]:
+    if st.session_state["mostra_form_accesso"]:
+        mostra_accesso()
+    else:
+        mostra_vetrina()
+    st.stop()
+
+# Dopo l'accesso, ragione sociale e P.IVA diventano quelle dell'azienda connessa (report, PDF, barra laterale).
 RAGIONE_AZIENDA = st.session_state.get("ragione_sociale") or RAGIONE_AZIENDA
 PIVA_AZIENDA = st.session_state.get("piva_azienda") or PIVA_AZIENDA
 
-# --- BARRA LATERALE -------------------------------------------------------
+# --- BARRA LATERALE ------------------------------------------------------------
 if os.path.exists(LOGO_FILENAME):
     st.sidebar.image(LOGO_FILENAME, width=150)
 st.sidebar.markdown(f"### **{RAGIONE_AZIENDA}**")
 st.sidebar.caption(f"P.IVA: `{PIVA_AZIENDA}`")
-st.sidebar.info(f"⚖️ **Accisa configurata:** `{ALIQUOTA_ACCISA_PLATO:.3f} €/hl/°P` — verificare annualmente con consulente/ADM.")
+st.sidebar.info(f"⚖️ **Accisa 2026 (Microbirrifici -50%):** `{ALIQUOTA_ACCISA_PLATO:.3f} €/hl/°P`. Verifica ogni anno con il tuo consulente.")
 st.sidebar.markdown(f"👤 **Operatore:** `{st.session_state['utente_connesso']}`")
-st.sidebar.caption(f"🔐 Tenant: `{st.session_state.get('azienda_id', '')}`")
-if st.sidebar.button("Disconnetti (Logout)"):
-    for k in ("autenticato", "utente_connesso", "azienda_id", "ragione_sociale", "piva_azienda"):
-        st.session_state.pop(k, None)
-    st.rerun()
 
+if st.session_state.get("password_di_default"):
+    st.sidebar.error("Stai usando la password di esempio delle vecchie versioni. Cambiala subito qui sotto.")
+
+with st.sidebar.expander("🔑 Cambia password", expanded=bool(st.session_state.get("password_di_default"))):
+    with st.form("form_cambia_password", clear_on_submit=True):
+        pw_vecchia = st.text_input("Password attuale", type="password", key="pw_vecchia")
+        pw_nuova = st.text_input("Nuova password", type="password", key="pw_nuova")
+        pw_nuova2 = st.text_input("Ripeti la nuova password", type="password", key="pw_nuova2")
+        invia_pw = st.form_submit_button("Aggiorna password")
+    if invia_pw:
+        riga_pw = _auth_leggi("SELECT password FROM utenti WHERE id=%s;", (st.session_state.get("user_id"),))
+        errore_pw = controlla_password_nuova(pw_nuova, pw_nuova2, st.session_state["utente_connesso"])
+        if not riga_pw or not verify_password(pw_vecchia, riga_pw[0][0]):
+            st.error("La password attuale non è corretta.")
+        elif errore_pw:
+            st.error(errore_pw)
+        else:
+            _auth_scrivi("UPDATE utenti SET password=%s WHERE id=%s;", (hash_password(pw_nuova), st.session_state["user_id"]))
+            st.session_state["password_di_default"] = False
+            st.success("Password aggiornata.")
+
+if st.session_state.get("ruolo") == "admin":
+    with st.sidebar.expander("👥 Aggiungi operatore"):
+        st.caption("Crea un accesso per un collaboratore dello stesso birrificio.")
+        with st.form("form_nuovo_operatore", clear_on_submit=True):
+            op_user = st.text_input("Nome utente", key="op_user")
+            op_pwd = st.text_input("Password", type="password", key="op_pwd")
+            op_pwd2 = st.text_input("Ripeti la password", type="password", key="op_pwd2")
+            invia_op = st.form_submit_button("Crea operatore")
+        if invia_op:
+            op_user = op_user.strip()
+            if not username_valido(op_user):
+                st.error("Il nome utente deve avere da 3 a 40 caratteri: lettere, numeri, . _ @ -")
+            elif controlla_password_nuova(op_pwd, op_pwd2, op_user):
+                st.error(controlla_password_nuova(op_pwd, op_pwd2, op_user))
+            elif _auth_leggi("SELECT 1 FROM utenti WHERE LOWER(username)=LOWER(%s) LIMIT 1;", (op_user,)):
+                st.error("Questo nome utente è già in uso.")
+            else:
+                _auth_scrivi(
+                    "INSERT INTO utenti (username, password, ragione_sociale, piva, azienda_id, ruolo) "
+                    "VALUES (%s, %s, %s, %s, %s, 'operatore');",
+                    (op_user, hash_password(op_pwd), st.session_state["ragione_sociale"],
+                     st.session_state["piva_azienda"], st.session_state["azienda_id"]),
+                )
+                st.success(f"Operatore «{op_user}» creato.")
+
+if st.sidebar.button("Disconnetti (Logout)", key="btn_logout"):
+    for _chiave in ("autenticato", "utente_connesso", "user_id", "azienda_id", "ragione_sociale",
+                    "piva_azienda", "ruolo", "password_di_default"):
+        st.session_state.pop(_chiave, None)
+    st.session_state["mostra_form_accesso"] = False
+    st.rerun()
 # --- FUNZIONI CACHED A PRESTAZIONI FULMINEE (MILLISECONDI) ---
 @st.cache_data(ttl=600)
 def get_cached_riepilogo(tenant_id):

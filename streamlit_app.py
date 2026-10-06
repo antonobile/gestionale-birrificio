@@ -3619,7 +3619,7 @@ with tab8:
                     with conn.cursor() as c:
                         for idx, (fmt, qta, lt_r, art_imb) in enumerate(movs):
                             sc = scarto_reale if idx == 0 else 0.0
-                       c.execute(
+                       c.execute("INSERT INTO birra_condizionata (azienda_id, tipo, data, lotto, formato, quantita, litri_totali, grado_plato, ettogradi, scarto_litri, costo_produzione_litro, documento_rif) VALUES (%s, 'CARICO', %s, %s, %s, %s, %s, %s, %s, %s, %s, 'CONFEZIONAMENTO');", (st.session_state["azienda_id"], d_str, lotto_c, fmt, qta, lt_r, plato_rif, (lt_r * plato_rif) / 100.0, sc, costo_p_lt))
                                 "INSERT INTO birra_condizionata (azienda_id, tipo, data, lotto, formato, quantita, litri_totali, grado_plato, ettogradi, scarto_litri, costo_produzione_litro, documento_rif) VALUES (%s, 'CARICO', %s, %s, %s, %s, %s, %s, %s, %s, %s, 'CONFEZIONAMENTO');",
                                 (st.session_state["azienda_id"], d_str, lotto_c, fmt, qta, lt_r, plato_rif, (lt_r * plato_rif) / 100.0, sc, costo_p_lt)
                             )

@@ -29,7 +29,62 @@ st.set_page_config(
     page_icon=icona_finestra,
     layout="wide"
 )
+# --- 1. APPLICAZIONE SFONDO SFUMATO (Ambra, Verde Chiaro, Giallo Chiaro) ---
+st.markdown("""
+    <style>
+    .stApp {
+        background: linear-gradient(135deg, #fef3c7 0%, #ecfdf5 50%, #fef9c3 100%);
+        background-attachment: fixed;
+    }
+    div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlock"] {
+        background-color: rgba(255, 255, 255, 0.65);
+        padding: 1.2rem;
+        border-radius: 1rem;
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(245, 158, 11, 0.2);
+    }
+    </style>
+""", unsafe_allow_html=True)
 
+# --- 2. GESTIONE STATO DI ACCESSO ---
+if "logged_in" not in st.session_state:
+    st.session_state["logged_in"] = False
+
+# --- 3. SE NON È LOGGATO: MOSTRA LANDING PAGE + ACCESSO ---
+if not st.session_state["logged_in"]:
+    # Inserisci qui il codice HTML definitivo della tua landing page
+    html_landing = """
+    <!DOCTYPE html>
+    <html lang="it">
+    <head>
+        <meta charset="UTF-8">
+        <script src="https://cdn.tailwindcss.com"></script>
+    </head>
+    <body class="bg-[#18120b] text-white font-sans">
+        <div class="min-h-screen flex flex-col items-center justify-center text-center px-4 py-12">
+            <span class="text-6xl mb-4">🍻</span>
+            <h1 class="text-5xl font-black tracking-tight text-white mb-4">
+                Brew<span class="text-amber-500">Desk</span>
+            </h1>
+            <p class="text-amber-100/70 max-w-xl text-lg mb-8">
+                Il sistema operativo definitivo per il tuo birrificio artigianale.
+            </p>
+        </div>
+    </body>
+    </html>
+    """
+    
+    components.html(html_landing, height=500, scrolling=True)
+    
+    col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
+    with col_l2:
+        if st.button("🚀 Accedi o Registrati al Gestionale", use_container_width=True):
+            st.session_state["mostra_form_accesso"] = True
+            st.rerun()
+
+    if st.session_state.get("mostra_form_accesso", False):
+        st.divider()
+        # Qui sotto continuerà poi il tuo form di login/registrazione esistente
 st.markdown(
     """
     <head>

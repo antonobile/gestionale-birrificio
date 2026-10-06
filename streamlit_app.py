@@ -117,14 +117,11 @@ def _tenant_from_session() -> str:
 
 
 def _set_connection_tenant(conn, tenant_id: str | None):
-    """Imposta il tenant sulla singola connessione presa dal pool."""
+    """Imposta il tenant solo se il tenant_id è valido e presente."""
+    if not tenant_id:
+        return
     with conn.cursor() as c:
-        if tenant_id:
-            c.execute("SELECT set_config('app.azienda_id', %s, false);", (tenant_id,))
-        else:
-            c.execute("RESET app.azienda_id;")
-
-
+        c.execute("SET LOCAL app.azienda_id = %s;", (tenant_id,))
 def _configure_tenant_security(cursor, tables, legacy_tenant):
     """Aggiunge azienda_id, migra i record legacy e abilita RLS sulle tabelle operative."""
     for table in tables:

@@ -3719,14 +3719,15 @@ with tab9:
 with tab10:
     st.subheader("🏛 Giacenze Magazzino Prodotti Finiti")
     with get_db_connection() as conn:
-        df_pf = pd.read_sql_query("""
+       df_pf = pd.read_sql_query("""
             SELECT formato as "Formato Contenitore", 
                    COALESCE(SUM(CASE WHEN tipo='CARICO' THEN quantita ELSE -quantita END), 0) as "Giacenza (Pezzi)",
                    ROUND(COALESCE(SUM(CASE WHEN tipo='CARICO' THEN litri_totali ELSE -litri_totali END), 0)::numeric, 1) as "Giacenza (Litri)",
                    ROUND(AVG(grado_plato)::numeric, 1) as "Grado Plato Medio (°P)"
             FROM birra_condizionata 
+            WHERE azienda_id = %s
             GROUP BY formato ORDER BY formato;
-        """, conn)
+        """, conn, params=(st.session_state["azienda_id"],))
         st.dataframe(df_pf, use_container_width=True)
 
         st.markdown("#### 🔍 Dettaglio Movimentazioni & Lotti")

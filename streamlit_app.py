@@ -3891,15 +3891,11 @@ with tab11:
             FROM imballaggi GROUP BY articolo;
         """, conn)
 
-  df_pf_ant = pd.read_sql_query('SELECT formato as "Formato", SUM(CASE WHEN tipo=\'CARICO\' THEN quantita ELSE -quantita END) as "Giacenza (pz)", ROUND(SUM(CASE WHEN tipo=\'CARICO\' THEN litri_totali ELSE -litri_totali END)::numeric, 1) as "Litri Totali", ROUND(SUM(CASE WHEN tipo=\'CARICO\' THEN (litri_totali * costo_produzione_litro + litri_totali * grado_plato / 100.0 * %s) ELSE 0 END)::numeric, 2) as "Valore Fiscale (€)" FROM birra_condizionata WHERE azienda_id = %s GROUP BY formato;', conn, params=(aliquota_calcolo, st.session_state["azienda_id"]))
-            SELECT formato as "Formato", 
-                   SUM(CASE WHEN tipo='CARICO' THEN quantita ELSE -quantita END) as "Giacenza (pz)",
-                   ROUND(SUM(CASE WHEN tipo='CARICO' THEN litri_totali ELSE -litri_totali END)::numeric, 1) as "Litri Totali",
-                   ROUND(SUM(CASE WHEN tipo='CARICO' THEN (litri_totali * costo_produzione_litro + litri_totali * grado_plato / 100.0 * %s) ELSE 0 END)::numeric, 2) as "Valore Fiscale (€)"
-            FROM birra_condizionata 
-            WHERE azienda_id = %s
-            GROUP BY formato;
-    df_pf_ant = pd.read_sql_query('SELECT formato as "Formato", SUM(CASE WHEN tipo=\'CARICO\' THEN quantita ELSE -quantita END) as "Giacenza (pz)", ROUND(SUM(CASE WHEN tipo=\'CARICO\' THEN litri_totali ELSE -litri_totali END)::numeric, 1) as "Litri Totali", ROUND(SUM(CASE WHEN tipo=\'CARICO\' THEN (litri_totali * costo_produzione_litro + litri_totali * grado_plato / 100.0 * %s) ELSE 0 END)::numeric, 2) as "Valore Fiscale (€)" FROM birra_condizionata WHERE azienda_id = %s GROUP BY formato;', conn, params=(aliquota_calcolo, st.session_state["azienda_id"]))
+ df_pf_ant = pd.read_sql_query(
+            'SELECT formato as "Formato", SUM(CASE WHEN tipo=\'CARICO\' THEN quantita ELSE -quantita END) as "Giacenza (pz)", ROUND(SUM(CASE WHEN tipo=\'CARICO\' THEN litri_totali ELSE -litri_totali END)::numeric, 1) as "Litri Totali", ROUND(SUM(CASE WHEN tipo=\'CARICO\' THEN (litri_totali * costo_produzione_litro + litri_totali * grado_plato / 100.0 * %s) ELSE 0 END)::numeric, 2) as "Valore Fiscale (€)" FROM birra_condizionata WHERE azienda_id = %s GROUP BY formato;',
+            conn, 
+            params=(aliquota_calcolo, st.session_state["azienda_id"])
+        )
     val_imb_tot = float(df_imb_ant["Valore Totale (€)"].sum()) if not df_imb_ant.empty else 0.0
     val_pf_tot = float(df_pf_ant["Valore Fiscale (€)"].sum()) if not df_pf_ant.empty else 0.0
     tot_bilancio = valore_tot_mp + val_imb_tot + val_pf_tot

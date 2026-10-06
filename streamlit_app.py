@@ -547,15 +547,6 @@ if not st.session_state["autenticato"]:
     # Se l'utente non è autenticato
     if not st.session_state.get("autenticato", False):
         
-     # =========================================================================
-# ACCESSO, REGISTRAZIONE AZIENDE, VETRINA E BARRA LATERALE
-# Sostituisce interamente i blocchi originali:
-#   "# --- PROTEZIONE ACCESSO & REGISTRAZIONE AZIENDE ---"
-#   "# --- BARRA LATERALE ---"
-# Va incollato a livello di modulo (nessuna indentazione), DOPO la chiamata init_db().
-# Blocco autonomo: definisce da solo hash/verifica password, migrazione della
-# tabella utenti e tutto quello che serve alla schermata di accesso.
-# =========================================================================
 import hmac
 import secrets
 import time

@@ -540,19 +540,19 @@ if not st.session_state["autenticato"]:
                     utenti_presenti = int(c.fetchone()[0] or 0)
         except Exception:
             utenti_presenti = 0
-        # --- GESTIONE SCHERMATA DI ACCESSO / LANDING PAGE ---
+      # --- GESTIONE SCHERMATA DI ACCESSO / LANDING PAGE VETRINA ---
     if "mostra_form_accesso" not in st.session_state:
         st.session_state["mostra_form_accesso"] = False
 
-    # Se l'utente non è autenticato, verifichiamo se mostrare la landing o il form
+    # Se l'utente non è autenticato
     if not st.session_state.get("autenticato", False):
         
-        # 1. Se NON ha ancora cliccato per accedere, mostriamo la Landing Page con il pulsante
+        # 1. SCHERMATA VETRINA INIZIALE (LANDING PAGE PURA)
         if not st.session_state["mostra_form_accesso"]:
             st.markdown("""
-                <div style="background-color: #1e1e1e; padding: 40px; border-radius: 10px; text-align: center; color: white; margin-bottom: 20px;">
-                    <h1 style="color: #f58220; margin-bottom: 10px;">🍺 BrewDesk</h1>
-                    <p style="font-size: 18px; color: #cccccc;">Il sistema operativo definitivo per il tuo birrificio artigianale.</p>
+                <div style="background-color: #1e1e1e; padding: 60px 20px; border-radius: 12px; text-align: center; color: white; margin-top: 40px; margin-bottom: 30px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+                    <h1 style="color: #f58220; font-size: 3rem; margin-bottom: 10px;">🍺 BrewDesk</h1>
+                    <p style="font-size: 1.25rem; color: #cccccc; max-width: 600px; margin: 0 auto 30px auto;">Il sistema operativo definitivo per il tuo birrificio artigianale.</p>
                 </div>
             """, unsafe_allow_html=True)
             
@@ -563,10 +563,10 @@ if not st.session_state["autenticato"]:
                     st.rerun()
             st.stop()
         
-        # 2. Se ha cliccato il pulsante, mostriamo il box di Login / Registrazione
+        # 2. PANNELLO DI ACCESSO DEDICATO (LA VETRINA SPARISCE COMPLETAMENTE)
         else:
             st.markdown("""
-                <div style="text-align: center; margin-bottom: 20px;">
+                <div style="text-align: center; margin-top: 30px; margin-bottom: 25px;">
                     <h2 style="color: #f58220;">Area Riservata - BrewDesk</h2>
                     <p style="color: #666;">Inserisci le tue credenziali o registra la tua azienda</p>
                 </div>
@@ -646,8 +646,8 @@ if not st.session_state["autenticato"]:
                                 except Exception as e:
                                     st.error(f"Errore durante la registrazione: {e}")
                 
-                # Pulsante per tornare indietro alla Landing Page iniziale
-                if st.button("⬅ Torna alla Home", use_container_width=True):
+                # Pulsante per tornare alla vetrina iniziale
+                if st.button("⬅ Torna alla Vetrina", use_container_width=True):
                     st.session_state["mostra_form_accesso"] = False
                     st.rerun()
                     

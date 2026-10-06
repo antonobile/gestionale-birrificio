@@ -53,7 +53,6 @@ if "logged_in" not in st.session_state:
 
 # --- 3. SE NON È LOGGATO: MOSTRA LANDING PAGE + ACCESSO ---
 if not st.session_state["logged_in"]:
-    # Inserisci qui il codice HTML definitivo della tua landing page
     html_landing = """
     <!DOCTYPE html>
     <html lang="it">
@@ -75,7 +74,7 @@ if not st.session_state["logged_in"]:
     </html>
     """
     
-    components.html(html_landing, height=500, scrolling=True)
+    components.html(html_landing, height=450, scrolling=True)
     
     col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
     with col_l2:
@@ -85,7 +84,28 @@ if not st.session_state["logged_in"]:
 
     if st.session_state.get("mostra_form_accesso", False):
         st.divider()
-        # Qui sotto continuerà poi il tuo form di login/registrazione esistente
+        st.subheader("🔐 Area Riservata BrewDesk")
+        
+        # Form di autenticazione
+        with st.form("form_login"):
+            username_input = st.text_input("Username o Email")
+            password_input = st.text_input("Password", type="password")
+            submit_login = st.form_submit_button("Entra nel Gestionale", use_container_width=True)
+            
+            if submit_login:
+                # Inserisci qui la tua logica di verifica credenziali (es. controllo su DB)
+                # Esempio fittizio:
+                if username_input == "admin" and password_input == "tua_password":
+                    st.session_state["logged_in"] = True
+                    st.success("Accesso riuscito! Reindirizzamento...")
+                    st.rerun()
+                else:
+                    st.error("Credenziali non valide. Riprova.")
+
+    # 🛑 FERMA L'ESECUZIONE QUI SE L'UTENTE NON È LOGGATO
+    st.stop()
+
+# --- 4. INSERIMENTO ICONA CUSTOM NELL'HEAD (Visibile solo se loggato o globale) ---
 st.markdown(
     """
     <head>

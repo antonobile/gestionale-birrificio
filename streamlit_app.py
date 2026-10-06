@@ -3648,7 +3648,7 @@ with tab9:
                 WHERE tipo='CARICO' AND litri_totali > 0 AND azienda_id = %s;
             """, (st.session_state["azienda_id"],))
             costo_medio_stock_litro = float(c.fetchone()[0] or 1.10)
-                for up_xml in up_vendite_xml:
+            for up_xml in up_vendite_xml:
                     try:
                         content = up_xml.read()
                         root = ET.fromstring(content)

@@ -3618,16 +3618,11 @@ with tab8:
                 with get_db_connection() as conn:
                     with conn.cursor() as c:
                         for idx, (fmt, qta, lt_r, art_imb) in enumerate(movs):
-                            sc = scarto_reale if idx == 0 else 0.0
-                   c.execute(
+                         sc = scarto_reale if idx == 0 else 0.0
+                    c.execute(
                         "INSERT INTO birra_condizionata (azienda_id, tipo, data, lotto, formato, quantita, litri_totali, grado_plato, ettogradi, scarto_litri, costo_produzione_litro, documento_rif) VALUES (%s, 'CARICO', %s, %s, %s, %s, %s, %s, %s, %s, %s, 'CONFEZIONAMENTO');",
                         (st.session_state["azienda_id"], d_str, lotto_c, fmt, qta, lt_r, plato_rif, (lt_r * plato_rif) / 100.0, sc, costo_p_lt)
                     )
-                            c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', %s, %s, %s, %s);", (d_str, f"Lotto {lotto_c}", art_imb, qta))
-                            if "Bottiglia" in fmt:
-                                c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', %s, %s, 'Tappi a corona', %s);", (d_str, f"Lotto {lotto_c}", qta))
-                                c.execute("INSERT INTO imballaggi (tipo_movimento, data, riferimento, articolo, quantita) VALUES ('SCARICO', %s, %s, 'Etichette', %s);", (d_str, f"Lotto {lotto_c}", qta))
-                    conn.commit()
                 invalidate_caches()
                 st.success(f"Confezionamento registrato! Caricati {litri_effettivi:.1f} LT a magazzino.")
                 st.rerun()

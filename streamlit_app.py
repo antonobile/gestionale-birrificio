@@ -597,7 +597,21 @@ if not st.session_state["autenticato"]:
                                 st.success("Azienda registrata! Ora puoi effettuare l'accesso.")
                                 st.rerun()
                 
-        st.markdown("</div>", unsafe_allow_html=True)
+        if utenti_presenti == 0:
+            st.info("👋 Nessun account trovato. Registra la prima azienda.")
+            tab_scelta = ["Registrazione Admin"]
+        else:
+            tab_scelta = ["Accedi", "Registra Nuova Azienda"]
+
+        scelta = st.radio("Seleziona modalità", tab_scelta, horizontal=True, label_visibility="collapsed")
+        
+        if scelta == "Accedi" or scelta == "Registrazione Admin":
+            with st.form("login_form_integrato"):
+                username_inserito = st.text_input("Nome Utente / Username")
+                pwd_inserita = st.text_input("Password di Accesso", type="password")
+                btn_login = st.form_submit_button("🚀 Entrata in Cantina", use_container_width=True, type="primary")
+                
+                if btn_login:
                     username_norm = username_inserito.strip()
                     with get_db_connection() as conn:
                         with conn.cursor() as c:
@@ -615,14 +629,14 @@ if not st.session_state["autenticato"]:
                         st.rerun()
                     else:
                         st.error("Credenziali non valide. Verifica Nome Utente e Password.")
-
-        with tab_log_2:
+        else:
             with st.form("form_registrazione_azienda"):
                 reg_user = st.text_input("Scegli Username *")
                 reg_pwd = st.text_input("Scegli Password *", type="password")
                 reg_ragione = st.text_input("Ragione Sociale Birrificio *", placeholder="es. Birrificio Artigianale...")
                 reg_piva = st.text_input("Partita IVA *", placeholder="es. 01234567890")
                 btn_reg = st.form_submit_button("Registra Azienda e Accedi", type="primary")
+                
                 if btn_reg:
                     reg_user = reg_user.strip()
                     reg_ragione = reg_ragione.strip()
@@ -654,6 +668,10 @@ if not st.session_state["autenticato"]:
                             st.rerun()
                         except Exception as e:
                             st.error(f"Errore durante la registrazione. Username o Partita IVA potrebbero essere già presenti: {e}")
+                            
+        st.markdown("</div>", unsafe_allow_html=True)
+
+st.stop()
     st.stop()
 
 # Dopo il login questi valori diventano dinamici per report, sidebar e documenti.

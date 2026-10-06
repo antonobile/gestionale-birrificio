@@ -13,6 +13,7 @@ from psycopg2 import pool, Binary
 import xml.etree.ElementTree as ET
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from fpdf import FPDF
 from PIL import Image
 

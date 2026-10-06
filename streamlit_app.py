@@ -540,88 +540,118 @@ if not st.session_state["autenticato"]:
                     utenti_presenti = int(c.fetchone()[0] or 0)
         except Exception:
             utenti_presenti = 0
-         # --- PANNELLO DI ACCESSO INTEGRATO SULLA LANDING ---
-    col_i1, col_i2, col_i3 = st.columns([1, 2, 1])
-    with col_i2:
-        st.markdown("""
-            <div style="background: rgba(255, 255, 255, 0.85); padding: 1.5rem; border-radius: 1rem; border: 1px solid rgba(245, 158, 11, 0.3); backdrop-filter: blur(10px); box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05);">
-        """, unsafe_allow_html=True)
-        
-        if utenti_presenti == 0:
-            st.info("👋 Nessun account trovato. Registra la prima azienda.")
-            tab_scelta = ["Registrazione Admin"]
-        else:
-            tab_scelta = ["Accedi", "Registra Nuova Azienda"]
+        # --- GESTIONE SCHERMATA DI ACCESSO / LANDING PAGE ---
+    if "mostra_form_accesso" not in st.session_state:
+        st.session_state["mostra_form_accesso"] = False
 
-        scelta = st.radio("Seleziona modalità", tab_scelta, horizontal=True, label_visibility="collapsed", key="scelta_modalita_principale")
+    # Se l'utente non è autenticato, verifichiamo se mostrare la landing o il form
+    if not st.session_state.get("autenticato", False):
         
-        if scelta == "Accedi" or scelta == "Registrazione Admin":
-            with st.form("form_login_pulito"):
-                username_inserito = st.text_input("Nome Utente / Username", key="user_login_unico")
-                pwd_inserita = st.text_input("Password di Accesso", type="password", key="pwd_login_unico")
-                btn_login = st.form_submit_button("Accedi", use_container_width=True, type="primary")
-                
-                if btn_login:
-                    username_norm = username_inserito.strip()
-                    with get_db_connection() as conn:
-                        with conn.cursor() as c:
-                            c.execute("""
-                                SELECT id, username, password, ragione_sociale, piva, azienda_id
-                                FROM utenti WHERE username=%s LIMIT 1;
-                            """, (username_norm,))
-                            user_row = c.fetchone()
-                    if user_row and verify_password(pwd_inserita, user_row[2]):
-                        st.session_state["autenticato"] = True
-                        st.session_state["utente_connesso"] = user_row[1]
-                        st.session_state["ragione_sociale"] = user_row[3] or ""
-                        st.session_state["piva_azienda"] = user_row[4] or ""
-                        st.session_state["azienda_id"] = user_row[5] or user_row[4] or ""
-                        st.rerun()
-                    else:
-                        st.error("Credenziali non valide. Verifica Nome Utente e Password.")
+        # 1. Se NON ha ancora cliccato per accedere, mostriamo la Landing Page con il pulsante
+        if not st.session_state["mostra_form_accesso"]:
+            st.markdown("""
+                <div style="background-color: #1e1e1e; padding: 40px; border-radius: 10px; text-align: center; color: white; margin-bottom: 20px;">
+                    <h1 style="color: #f58220; margin-bottom: 10px;">🍺 BrewDesk</h1>
+                    <p style="font-size: 18px; color: #cccccc;">Il sistema operativo definitivo per il tuo birrificio artigianale.</p>
+                </div>
+            """, unsafe_allow_html=True)
+            
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                if st.button("🚀 Accedi o Registrati al Gestionale", use_container_width=True, type="primary"):
+                    st.session_state["mostra_form_accesso"] = True
+                    st.rerun()
+            st.stop()
+        
+        # 2. Se ha cliccato il pulsante, mostriamo il box di Login / Registrazione
         else:
-            with st.form("form_registrazione_pulito"):
-                reg_user = st.text_input("Scegli Username *", key="reg_user_unico")
-                reg_pwd = st.text_input("Scegli Password *", type="password", key="reg_pwd_unico")
-                reg_ragione = st.text_input("Ragione Sociale Birrificio *", placeholder="es. Birrificio Artigianale...", key="reg_ragione_unico")
-                reg_piva = st.text_input("Partita IVA *", placeholder="es. 01234567890", key="reg_piva_unico")
-                btn_reg = st.form_submit_button("Registra Azienda e Accedi", type="primary")
+            st.markdown("""
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <h2 style="color: #f58220;">Area Riservata - BrewDesk</h2>
+                    <p style="color: #666;">Inserisci le tue credenziali o registra la tua azienda</p>
+                </div>
+            """, unsafe_allow_html=True)
+            
+            col_A, col_B, col_C = st.columns([1, 2, 1])
+            with col_B:
+                if utenti_presenti == 0:
+                    st.info("👋 Nessun account trovato. Registra la prima azienda.")
+                    tab_scelta = ["Registrazione Admin"]
+                else:
+                    tab_scelta = ["Accedi", "Registra Nuova Azienda"]
+
+                scelta = st.radio("Seleziona modalità", tab_scelta, horizontal=True, label_visibility="collapsed", key="scelta_modalita_principale")
                 
-                if btn_reg:
-                    reg_user = reg_user.strip()
-                    reg_ragione = reg_ragione.strip()
-                    reg_piva = re.sub(r"\s+", "", reg_piva.strip())
-                    if not (reg_user and reg_pwd and reg_ragione and reg_piva):
-                        st.error("Tutti i campi contrassegnati sono obbligatori.")
-                    elif len(reg_pwd) < 10:
-                        st.error("Per sicurezza usa una password di almeno 10 caratteri.")
-                    elif len(reg_piva) not in (11, 16):
-                        st.error("Inserisci una Partita IVA/codice identificativo valido.")
-                    else:
-                        try:
-                            password_hash = hash_password(reg_pwd)
+                if scelta == "Accedi" or scelta == "Registrazione Admin":
+                    with st.form("form_login_pulito"):
+                        username_inserito = st.text_input("Nome Utente / Username", key="user_login_unico")
+                        pwd_inserita = st.text_input("Password di Accesso", type="password", key="pwd_login_unico")
+                        btn_login = st.form_submit_button("Accedi al Gestionale", use_container_width=True, type="primary")
+                        
+                        if btn_login:
+                            username_norm = username_inserito.strip()
                             with get_db_connection() as conn:
                                 with conn.cursor() as c:
                                     c.execute("""
-                                        INSERT INTO utenti (username, password, ragione_sociale, piva, azienda_id)
-                                        VALUES (%s, %s, %s, %s, %s)
-                                        RETURNING id;
-                                    """, (reg_user, password_hash, reg_ragione, reg_piva, reg_piva))
-                                    c.fetchone()
-                                conn.commit()
-                            st.session_state["autenticato"] = True
-                            st.session_state["utente_connesso"] = reg_user
-                            st.session_state["ragione_sociale"] = reg_ragione
-                            st.session_state["piva_azienda"] = reg_piva
-                            st.session_state["azienda_id"] = reg_piva
-                            st.success("Registrazione completata con successo! Benvenuto in BrewDesk.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Errore durante la registrazione: {e}")
-                            
-        st.markdown("</div>", unsafe_allow_html=True)
-
-st.stop()
+                                        SELECT id, username, password, ragione_sociale, piva, azienda_id
+                                        FROM utenti WHERE username=%s LIMIT 1;
+                                    """, (username_norm,))
+                                    user_row = c.fetchone()
+                            if user_row and verify_password(pwd_inserita, user_row[2]):
+                                st.session_state["autenticato"] = True
+                                st.session_state["utente_connesso"] = user_row[1]
+                                st.session_state["ragione_sociale"] = user_row[3] or ""
+                                st.session_state["piva_azienda"] = user_row[4] or ""
+                                st.session_state["azienda_id"] = user_row[5] or user_row[4] or ""
+                                st.rerun()
+                            else:
+                                st.error("Credenziali non valide. Verifica Nome Utente e Password.")
+                else:
+                    with st.form("form_registrazione_pulito"):
+                        reg_user = st.text_input("Scegli Username *", key="reg_user_unico")
+                        reg_pwd = st.text_input("Scegli Password *", type="password", key="reg_pwd_unico")
+                        reg_ragione = st.text_input("Ragione Sociale Birrificio *", placeholder="es. Birrificio Artigianale...", key="reg_ragione_unico")
+                        reg_piva = st.text_input("Partita IVA *", placeholder="es. 01234567890", key="reg_piva_unico")
+                        btn_reg = st.form_submit_button("Registra Azienda e Accedi", type="primary", use_container_width=True)
+                        
+                        if btn_reg:
+                            reg_user = reg_user.strip()
+                            reg_ragione = reg_ragione.strip()
+                            reg_piva = re.sub(r"\s+", "", reg_piva.strip())
+                            if not (reg_user and reg_pwd and reg_ragione and reg_piva):
+                                st.error("Tutti i campi contrassegnati sono obbligatori.")
+                            elif len(reg_pwd) < 10:
+                                st.error("Per sicurezza usa una password di almeno 10 caratteri.")
+                            elif len(reg_piva) not in (11, 16):
+                                st.error("Inserisci una Partita IVA/codice identificativo valido.")
+                            else:
+                                try:
+                                    password_hash = hash_password(reg_pwd)
+                                    with get_db_connection() as conn:
+                                        with conn.cursor() as c:
+                                            c.execute("""
+                                                INSERT INTO utenti (username, password, ragione_sociale, piva, azienda_id)
+                                                VALUES (%s, %s, %s, %s, %s)
+                                                RETURNING id;
+                                            """, (reg_user, password_hash, reg_ragione, reg_piva, reg_piva))
+                                            c.fetchone()
+                                        conn.commit()
+                                    st.session_state["autenticato"] = True
+                                    st.session_state["utente_connesso"] = reg_user
+                                    st.session_state["ragione_sociale"] = reg_ragione
+                                    st.session_state["piva_azienda"] = reg_piva
+                                    st.session_state["azienda_id"] = reg_piva
+                                    st.success("Registrazione completata con successo! Benvenuto in BrewDesk.")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Errore durante la registrazione: {e}")
+                
+                # Pulsante per tornare indietro alla Landing Page iniziale
+                if st.button("⬅ Torna alla Home", use_container_width=True):
+                    st.session_state["mostra_form_accesso"] = False
+                    st.rerun()
+                    
+            st.stop()
 
 # Dopo il login questi valori diventano dinamici per report, sidebar e documenti.
 RAGIONE_AZIENDA = st.session_state.get("ragione_sociale") or RAGIONE_AZIENDA

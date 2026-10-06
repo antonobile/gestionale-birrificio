@@ -3692,7 +3692,7 @@ with tab9:
 with tab10:
     st.subheader("🏛 Giacenze Magazzino Prodotti Finiti")
     with get_db_connection() as conn:
-       df_pf = pd.read_sql_query("""
+        df_pf = pd.read_sql_query("""
             SELECT formato as "Formato Contenitore", 
                    COALESCE(SUM(CASE WHEN tipo='CARICO' THEN quantita ELSE -quantita END), 0) as "Giacenza (Pezzi)",
                    ROUND(COALESCE(SUM(CASE WHEN tipo='CARICO' THEN litri_totali ELSE -litri_totali END), 0)::numeric, 1) as "Giacenza (Litri)",
@@ -3708,8 +3708,9 @@ with tab10:
             SELECT id, data as "Data", tipo as "Movimento", lotto as "Lotto", formato as "Formato", 
                    quantita as "Pz", litri_totali as "Litri", ettogradi as "°Ettogradi", scarto_litri as "Scarto (LT)", documento_rif as "Riferimento"
             FROM birra_condizionata 
+            WHERE azienda_id = %s
             ORDER BY id DESC;
-        """, conn)
+        """, conn, params=(st.session_state["azienda_id"],))
         st.dataframe(df_det, use_container_width=True)
 
         if not df_det.empty:
@@ -3723,12 +3724,11 @@ with tab10:
                 st.write("")
                 if st.button("🗑️ Elimina Movimento", type="primary"):
                     with conn.cursor() as c:
-                        c.execute("DELETE FROM birra_condizionata WHERE id=%s;", (id_m_del,))
+                        c.execute("DELETE FROM birra_condizionata WHERE id=%s AND azienda_id=%s;", (id_m_del, st.session_state["azienda_id"]))
                     conn.commit()
                     invalidate_caches()
                     st.success("Movimento eliminato!")
                     st.rerun()
-
 # =========================================================================
 # TAB 11: REPORT 31/12 & DOGANE
 # =========================================================================

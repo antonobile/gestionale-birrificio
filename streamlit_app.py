@@ -3645,14 +3645,14 @@ with tab9:
         tot_scarichi, tot_litri = 0, 0.0
         with get_db_connection() as conn:
             with conn.cursor() as c:
-                c.execute("""
-                    SELECT COALESCE(
-                        SUM(litri_totali * costo_produzione_litro) / NULLIF(SUM(litri_totali), 0),
-                        1.10
-                    )
-                    FROM birra_condizionata
-                    WHERE tipo='CARICO' AND litri_totali > 0;
-                """)
+              c.execute("""
+                SELECT COALESCE(
+                    SUM(litri_totali * costo_produzione_litro) / NULLIF(SUM(litri_totali), 0),
+                    1.10
+                )
+                FROM birra_condizionata
+                WHERE tipo='CARICO' AND litri_totali > 0 AND azienda_id = %s;
+            """, (st.session_state["azienda_id"],))
                 costo_medio_stock_litro = float(c.fetchone()[0] or 1.10)
 
                 for up_xml in up_vendite_xml:
@@ -3679,10 +3679,10 @@ with tab9:
                                 if b_info:
                                     fmt_v, lt_un = b_info
                                     litri_r = qta * lt_un
-                                    c.execute("""
-                                        INSERT INTO birra_condizionata (tipo, data, lotto, formato, quantita, litri_totali, costo_produzione_litro, documento_rif)
-                                        VALUES ('SCARICO', %s, '-', %s, %s, %s, %s, %s);
-                                    """, (data_doc, fmt_v, qta, litri_r, p_un, rif_vendita))
+                                   c.execute("""
+                                INSERT INTO birra_condizionata (azienda_id, tipo, data, lotto, formato, quantita, litri_totali, costo_produzione_litro, documento_rif)
+                                VALUES (%s, 'SCARICO', %s, '-', %s, %s, %s, %s, %s);
+                            """, (st.session_state["azienda_id"], data_doc, fmt_v, qta, litri_r, p_un, rif_vendita))
                                     tot_scarichi += 1
                                     tot_litri += litri_r
                     except Exception as e:
@@ -3705,9 +3705,9 @@ with tab9:
             with get_db_connection() as conn:
                 with conn.cursor() as c:
                     c.execute("""
-                        INSERT INTO birra_condizionata (tipo, data, lotto, formato, quantita, litri_totali, documento_rif)
-                        VALUES ('SCARICO', %s, '-', %s, %s, %s, %s);
-                    """, (oggi, fmt_v, qta_v, qta_v * l_map[fmt_v], doc_v))
+                        INSERT INTO birra_condizionata (azienda_id, tipo, data, lotto, formato, quantita, litri_totali, documento_rif)
+                        VALUES (%s, 'SCARICO', %s, '-', %s, %s, %s, %s);
+                    """, (st.session_state["azienda_id"], oggi, fmt_v, qta_v, qta_v * l_map[fmt_v], doc_v))
                 conn.commit()
             invalidate_caches()
             st.success("Scarico birra registrato!")

@@ -540,28 +540,21 @@ if not st.session_state["autenticato"]:
                     utenti_presenti = int(c.fetchone()[0] or 0)
         except Exception:
             utenti_presenti = 0
-      # --- GESTIONE SCHERMATA DI ACCESSO / LANDING PAGE VETRINA ---
-    if "mostra_form_accesso" not in st.session_state:
-        st.session_state["mostra_form_accesso"] = False
-
-    # Se l'utente non è autenticato
-    if not st.session_state.get("autenticato", False):
-        
-import hmac
+    import hmac
 import secrets
 import time
 
 # --- Impostazioni -----------------------------------------------------------
 PREFISSO_HASH = "pbkdf2_sha256"
-ITERAZIONI_HASH = 600_000            # indicazione OWASP per PBKDF2-HMAC-SHA256
+ITERAZIONI_HASH = 600_000             # indicazione OWASP per PBKDF2-HMAC-SHA256
 PASSWORD_MIN_LUNGHEZZA = 10
-MAX_TENTATIVI_LOGIN = 5              # dopo 5 errori, blocco temporaneo
+MAX_TENTATIVI_LOGIN = 5               # dopo 5 errori, blocco temporaneo
 BLOCCO_LOGIN_SECONDI = 60
-RITARDO_ERRORE_LOGIN = 0.8           # piccolo ritardo dopo ogni errore
+RITARDO_ERRORE_LOGIN = 0.8            # piccolo ritardo dopo ogni errore
 PASSWORD_DEMO_VECCHIE_VERSIONI = "BirraNobile2026!"   # password di esempio delle vecchie versioni: va cambiata
-URL_PRIVACY = ""                     # es. "https://tuosito.it/privacy" (consigliato prima di vendere)
-URL_TERMINI = ""                     # es. "https://tuosito.it/termini"
-URL_SITO_VETRINA = ""                # es. la tua landing page; se vuoto il link non compare
+URL_PRIVACY = ""                      # es. "https://tuosito.it/privacy" (consigliato prima di vendere)
+URL_TERMINI = ""                      # es. "https://tuosito.it/termini"
+URL_SITO_VETRINA = ""                 # es. la tua landing page; se vuoto il link non compare
 
 
 # --- Password: hash con sale (solo libreria standard) ------------------------
@@ -635,7 +628,7 @@ def init_auth_db():
     """Migrazione una tantum: colonne azienda_id/ruolo e conversione delle password in chiaro in hash."""
     with get_db_connection() as conn:
         with conn.cursor() as c:
-            c.execute("SELECT pg_advisory_xact_lock(727401);")   # evita corse tra piu' istanze Cloud Run
+            c.execute("SELECT pg_advisory_xact_lock(727401);")    # evita corse tra piu' istanze Cloud Run
             c.execute("ALTER TABLE utenti ADD COLUMN IF NOT EXISTS azienda_id TEXT;")
             c.execute("ALTER TABLE utenti ADD COLUMN IF NOT EXISTS ruolo TEXT DEFAULT 'admin';")
             c.execute("ALTER TABLE utenti ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
@@ -805,7 +798,7 @@ def mostra_accesso():
                             (reg_user, hash_password(reg_pwd), reg_ragione, reg_piva, reg_piva),
                         )
                         nuovo = _auth_leggi("SELECT id, username, ragione_sociale, piva, azienda_id, ruolo FROM utenti "
-                                            "WHERE username=%s LIMIT 1;", (reg_user,))[0]
+                                             "WHERE username=%s LIMIT 1;", (reg_user,))[0]
                         st.session_state["password_di_default"] = False
                         _apri_sessione(nuovo)
                         st.rerun()

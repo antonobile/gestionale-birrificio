@@ -672,7 +672,6 @@ if not st.session_state["autenticato"]:
         st.markdown("</div>", unsafe_allow_html=True)
 
 st.stop()
-    st.stop()
 
 # Dopo il login questi valori diventano dinamici per report, sidebar e documenti.
 RAGIONE_AZIENDA = st.session_state.get("ragione_sociale") or RAGIONE_AZIENDA

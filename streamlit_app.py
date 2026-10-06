@@ -52,7 +52,7 @@ if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 
 # --- 3. SE NON È LOGGATO: MOSTRA LANDING PAGE + ACCESSO ---
-if not st.session_state["logged_in"]:
+if not st.session_state.get("logged_in", False):
     html_landing = """
     <!DOCTYPE html>
     <html lang="it">
@@ -74,7 +74,7 @@ if not st.session_state["logged_in"]:
     </html>
     """
     
-    components.html(html_landing, height=450, scrolling=True)
+    components.html(html_landing, height=400, scrolling=False)
     
     col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
     with col_l2:
@@ -86,26 +86,27 @@ if not st.session_state["logged_in"]:
         st.divider()
         st.subheader("🔐 Area Riservata BrewDesk")
         
-        # Form di autenticazione
         with st.form("form_login"):
             username_input = st.text_input("Username o Email")
             password_input = st.text_input("Password", type="password")
             submit_login = st.form_submit_button("Entra nel Gestionale", use_container_width=True)
             
             if submit_login:
-                # Inserisci qui la tua logica di verifica credenziali (es. controllo su DB)
-                # Esempio fittizio:
-                if username_input == "admin" and password_input == "tua_password":
+                # ---> INSERISCI QUI LA TUA LOGICA DI CONTROLLO CREDENZIALI <---
+                # Esempio: se vuoi sbloccarlo temporaneamente o collegarlo al tuo DB:
+                if username_input and password_input:  
+                    # Metti qui la tua condizione reale (es. verifica su database)
+                    # Per ora impostiamo il login a True se i campi non sono vuoti
                     st.session_state["logged_in"] = True
-                    st.success("Accesso riuscito! Reindirizzamento...")
+                    st.success("Accesso riuscito!")
                     st.rerun()
                 else:
-                    st.error("Credenziali non valide. Riprova.")
+                    st.error("Inserisci username e password.")
 
-    # 🛑 FERMA L'ESECUZIONE QUI SE L'UTENTE NON È LOGGATO
+    # 🛑 FERMA L'ESECUZIONE QUI FINCHÉ NON È LOGGATO
     st.stop()
 
-# --- 4. INSERIMENTO ICONA CUSTOM NELL'HEAD (Visibile solo se loggato o globale) ---
+# --- 4. INSERIMENTO ICONA CUSTOM NELL'HEAD (Visibile solo se loggato) ---
 st.markdown(
     """
     <head>
@@ -115,7 +116,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
 # --- DATI FISCALI & PARAMETRI 2026 ---
 PIVA_AZIENDA = "01822710628"
 CF_AZIENDA = "NBLLGU54L09F636V"

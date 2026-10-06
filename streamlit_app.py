@@ -603,12 +603,12 @@ if not st.session_state["autenticato"]:
         else:
             tab_scelta = ["Accedi", "Registra Nuova Azienda"]
 
-        scelta = st.radio("Seleziona modalità", tab_scelta, horizontal=True, label_visibility="collapsed")
+        scelta = st.radio("Seleziona modalità", tab_scelta, horizontal=True, label_visibility="collapsed", key="scelta_modalita_login")
         
         if scelta == "Accedi" or scelta == "Registrazione Admin":
             with st.form("login_form_integrato"):
-                username_inserito = st.text_input("Nome Utente / Username")
-                pwd_inserita = st.text_input("Password di Accesso", type="password")
+                username_inserito = st.text_input("Nome Utente / Username", key="input_user_login")
+                pwd_inserita = st.text_input("Password di Accesso", type="password", key="input_pwd_login")
                 btn_login = st.form_submit_button("🚀 Entrata in Cantina", use_container_width=True, type="primary")
                 
                 if btn_login:
@@ -631,10 +631,10 @@ if not st.session_state["autenticato"]:
                         st.error("Credenziali non valide. Verifica Nome Utente e Password.")
         else:
             with st.form("form_registrazione_azienda"):
-                reg_user = st.text_input("Scegli Username *")
-                reg_pwd = st.text_input("Scegli Password *", type="password")
-                reg_ragione = st.text_input("Ragione Sociale Birrificio *", placeholder="es. Birrificio Artigianale...")
-                reg_piva = st.text_input("Partita IVA *", placeholder="es. 01234567890")
+                reg_user = st.text_input("Scegli Username *", key="reg_user_input")
+                reg_pwd = st.text_input("Scegli Password *", type="password", key="reg_pwd_input")
+                reg_ragione = st.text_input("Ragione Sociale Birrificio *", placeholder="es. Birrificio Artigianale...", key="reg_ragione_input")
+                reg_piva = st.text_input("Partita IVA *", placeholder="es. 01234567890", key="reg_piva_input")
                 btn_reg = st.form_submit_button("Registra Azienda e Accedi", type="primary")
                 
                 if btn_reg:

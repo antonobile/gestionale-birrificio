@@ -3678,30 +3678,29 @@ with tab9:
                                     )
                                     tot_scarichi += 1
                                     tot_litri += litri_r
-        if tot_scarichi > 0:
-            invalidate_caches()
-            st.success(f"Registrati {tot_scarichi} scarichi per {tot_litri:.1f} Litri!")
-            st.rerun()
+        try:
+        for el in root.iter():
+            if el.tag.split("}")[-1] == "DettaglioLinee":
+                desc = trova_testo_nodo(el, ["Descrizione"])
+                qta = int(float(trova_testo_nodo(el, ["Quantità"]).replace(",", ".") or 1))
+                p_un = float(trova_testo_nodo(el, ["PrezzoUnitario"]).replace(",", ".") or 0.0)
+                b_info = estrai_birra_da_vendita(desc)
+                if b_info:
+                    fmt_v, lt_un = b_info
+                    litri_r = qta * lt_un
+                    c.execute(
+                        "INSERT INTO birra_condizionata (azienda_id, tipo, data, lotto, formato, quantita, litri_totali, grado_plato, ettogradi, costo_produzione_litro, documento_rif) VALUES (%s, 'SCARICO', %s, '-', %s, %s, %s, %s, %s, %s, %s);",
+                        (st.session_state["azienda_id"], data_doc, fmt_v, qta, litri_r, 0.0, 0.0, p_un, rif_vendita)
+                    )
+                    tot_scarichi += 1
+                    tot_litri += litri_r
+    except Exception as e:
+        st.error(f"Errore durante l'elaborazione degli scarichi: {e}")
 
-    st.write("---")
-    st.markdown("### ✍️ Scarico Vendita Manuale")
-    with st.form("vendita_manuale_form"):
-        doc_v = st.text_input("Riferimento DDT / Pub / Cliente")
-        fmt_v = st.selectbox("Formato Venduto", ["Fusto 12L", "Fusto 20L", "Fusto 24L", "Fusto 25L", "Fusto 30L", "Bottiglia 0.33L", "Bottiglia 0.75L"])
-        qta_v = st.number_input("Quantità Venduta", min_value=1, step=1)
-        if st.form_submit_button("Registra Scarico Magazzino"):
-            oggi = oggi_it().strftime("%Y-%m-%d")
-            l_map = {"Fusto 12L": 12.0, "Fusto 20L": 20.0, "Fusto 24L": 24.0, "Fusto 25L": 25.0, "Fusto 30L": 30.0, "Bottiglia 0.33L": 0.33, "Bottiglia 0.75L": 0.75}
-            with get_db_connection() as conn:
-                with conn.cursor() as c:
-                    c.execute("""
-                        INSERT INTO birra_condizionata (azienda_id, tipo, data, lotto, formato, quantita, litri_totali, documento_rif)
-                        VALUES (%s, 'SCARICO', %s, '-', %s, %s, %s, %s);
-                    """, (st.session_state["azienda_id"], oggi, fmt_v, qta_v, qta_v * l_map[fmt_v], doc_v))
-                conn.commit()
-            invalidate_caches()
-            st.success("Scarico birra registrato!")
-            st.rerun()
+    if tot_scarichi > 0:
+        invalidate_caches()
+        st.success(f"Registrati {tot_scarichi} scarichi per {tot_litri:.1f} Litri!")
+        st.rerun()
 
 # =========================================================================
 # TAB 10: GIACENZE MAGAZZINO

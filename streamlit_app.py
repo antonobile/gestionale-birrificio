@@ -3891,7 +3891,7 @@ with tab11:
             FROM imballaggi GROUP BY articolo;
         """, conn)
 
-      df_pf_ant = pd.read_sql_query("""
+   df_pf_ant = pd.read_sql_query("""
             SELECT formato as "Formato", 
                    SUM(CASE WHEN tipo='CARICO' THEN quantita ELSE -quantita END) as "Giacenza (pz)",
                    ROUND(SUM(CASE WHEN tipo='CARICO' THEN litri_totali ELSE -litri_totali END)::numeric, 1) as "Litri Totali",

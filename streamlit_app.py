@@ -3678,24 +3678,7 @@ with tab9:
                                     )
                                     tot_scarichi += 1
                                     tot_litri += litri_r
-        try:
-        for el in root.iter():
-            if el.tag.split("}")[-1] == "DettaglioLinee":
-                desc = trova_testo_nodo(el, ["Descrizione"])
-                qta = int(float(trova_testo_nodo(el, ["Quantità"]).replace(",", ".") or 1))
-                p_un = float(trova_testo_nodo(el, ["PrezzoUnitario"]).replace(",", ".") or 0.0)
-                b_info = estrai_birra_da_vendita(desc)
-                if b_info:
-                    fmt_v, lt_un = b_info
-                    litri_r = qta * lt_un
-                    c.execute(
-                        "INSERT INTO birra_condizionata (azienda_id, tipo, data, lotto, formato, quantita, litri_totali, grado_plato, ettogradi, costo_produzione_litro, documento_rif) VALUES (%s, 'SCARICO', %s, '-', %s, %s, %s, %s, %s, %s, %s);",
-                        (st.session_state["azienda_id"], data_doc, fmt_v, qta, litri_r, 0.0, 0.0, p_un, rif_vendita)
-                    )
-                    tot_scarichi += 1
-                    tot_litri += litri_r
-    except Exception as e:
-        st.error(f"Errore durante l'elaborazione degli scarichi: {e}")
+        
 
     if tot_scarichi > 0:
         invalidate_caches()

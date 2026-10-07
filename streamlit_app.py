@@ -3928,7 +3928,7 @@ with tab12:
         st.error(f"Errore nella scheda Scadenze & Promemoria: {_e_tab12}")
 
 # ==========================================
-# MODULO: AGENDA & PIANIFICAZIONE (INTERATTIVO AL CLICK)
+# MODULO: AGENDA & PIANIFICAZIONE (CON FASCE ORARIE)
 # ==========================================
 st.header("📅 Agenda & Pianificazione")
 
@@ -3940,12 +3940,16 @@ CATEGORIE_MAP = {
     "🟠 Evento": "#F97316"
 }
 
-# Gestione salvataggio da click sul calendario (tramite query params ripuliti)
+# Assicuriamoci che la tabella supporti data/ora (eseguito in automatico o gestito)
+# Nota: se la tabella esisteva già solo con date, usiamo stringhe YYYY-MM-DDTHH:MM per FullCalendar
+
+# Gestione salvataggio da click o form
 query_params = st.query_params
 if "nuovo_evento" in query_params:
     t_titolo = query_params["nuovo_evento"]
     t_cat = query_params.get("cat", "🟣 Appuntamento")
-    t_data = query_params.get("data", str(datetime.today().date()))
+    t_start = query_params.get("start", str(datetime.today()))
+    t_end = query_params.get("end", t_start)
     
     st.query_params.clear()
     
@@ -3954,40 +3958,45 @@ if "nuovo_evento" in query_params:
             with conn.cursor() as c:
                 c.execute(
                     "INSERT INTO eventi_agenda (titolo, categoria, data_inizio, data_fine) VALUES (%s, %s, %s, %s)",
-                    (t_titolo, t_cat, t_data, t_data)
+                    (t_titolo, t_cat, t_start, t_end)
                 )
                 conn.commit()
-        st.success(f"Evento '{t_titolo}' salvato con successo per il giorno {t_data}!")
+        st.success(f"Attività '{t_titolo}' salvata con successo!")
         st.rerun()
     except Exception as ex:
         st.error(f"Errore di salvataggio: {ex}")
 
-# Form classico di inserimento rapido
+# Form classico con opzione orario
 with st.form("form_aggiungi_evento", clear_on_submit=True):
     col1, col2, col3 = st.columns([2, 2, 1])
     with col1:
-        titolo_evento = st.text_input("Attività", placeholder="Es. Cotta Belgian Blonde")
+        titolo_evento = st.text_input("Attività", placeholder="Es. Controllo Fermentatore 1")
         categoria_evento = st.selectbox("Categoria", list(CATEGORIE_MAP.keys()))
     with col2:
-        data_inizio = st.date_input("Inizio", value=datetime.today().date())
-        data_fine = st.date_input("Fine", value=datetime.today().date())
+        data_i = st.date_input("Data Inizio", value=datetime.today().date())
+        ora_i = st.time_input("Ora Inizio", value=datetime.now().time())
+        data_f = st.date_input("Data Fine", value=datetime.today().date())
+        ora_f = st.time_input("Ora Fine", value=datetime.now().time())
     with col3:
-        st.write("") 
+        st.write("")
+        st.write("")
         submit_evento = st.form_submit_button("➕ Aggiungi")
     
     if submit_evento and titolo_evento:
+        dt_start_str = f"{data_i}T{ora_i.strftime('%H:%M')}"
+        dt_end_str = f"{data_f}T{ora_f.strftime('%H:%M')}"
         try:
             with get_db_connection() as conn:
                 with conn.cursor() as c:
                     c.execute(
                         "INSERT INTO eventi_agenda (titolo, categoria, data_inizio, data_fine) VALUES (%s, %s, %s, %s)",
-                        (titolo_evento, categoria_evento, str(data_inizio), str(data_fine))
+                        (titolo_evento, categoria_evento, dt_start_str, dt_end_str)
                     )
                     conn.commit()
-            st.success("Evento salvato con successo!")
+            st.success("Evento con fascia oraria salvato!")
             st.rerun()
         except Exception as ex:
-            st.error(f"Errore di salvataggio: {ex}")
+            st.error(f"Errore: {ex}")
 
 # Recupero eventi da Neon
 try:
@@ -4004,12 +4013,12 @@ try:
             "id": ev[0],
             "title": f"[{cat_nome}] {ev[1]}",
             "start": ev[3],
-            "end": ev[4],
+            "end": ev[4] if ev[4] else ev[3],
             "color": colore
         })
     eventi_json_str = json.dumps(eventi_js)
 
-    # Render Calendario (Mese / Settimana + Click sul giorno + Click sull'evento)
+    # Render Calendario con vista Oraria (TimeGrid) abilitata
     calendar_html = f"""
     <!DOCTYPE html>
     <html lang="it">
@@ -4018,13 +4027,11 @@ try:
         <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js'></script>
         <style>
             body {{ background-color: #0e1117; color: #ffffff; font-family: -apple-system, sans-serif; margin: 0; padding: 0; overflow: hidden; }}
-            #calendar {{ max-width: 100%; height: 420px; margin: 0 auto; background: #1a1c24; padding: 5px; border-radius: 8px; }}
+            #calendar {{ max-width: 100%; height: 500px; margin: 0 auto; background: #1a1c24; padding: 5px; border-radius: 8px; }}
             .fc {{ color: #ffffff; font-size: 0.8rem; }}
-            .fc-col-header-cell-cushion, .fc-daygrid-day-number {{ color: #ffffff !important; text-decoration: none; padding: 2px !important; }}
+            .fc-col-header-cell-cushion, .fc-daygrid-day-number, .fc-timegrid-slot-label-cushion {{ color: #ffffff !important; text-decoration: none; }}
             .fc-button-primary {{ background-color: #2563eb !important; border-color: #2563eb !important; padding: 2px 6px !important; font-size: 0.75rem !important; }}
             .fc-toolbar-title {{ font-size: 0.95rem !important; }}
-            .fc-daygrid-day-frame {{ min-height: 40px !important; cursor: pointer; }}
-            .fc-daygrid-day:hover {{ background-color: rgba(37, 99, 235, 0.15); }}
             .fc-event {{ cursor: pointer; font-size: 0.75rem; padding: 1px 3px; }}
         </style>
     </head>
@@ -4034,16 +4041,19 @@ try:
           document.addEventListener('DOMContentLoaded', function() {{
             var calendarEl = document.getElementById('calendar');
             var calendar = new FullCalendar.Calendar(calendarEl, {{
-              initialView: 'dayGridMonth',
+              initialView: 'timeGridWeek',
               locale: 'it',
+              slotMinTime: '06:00:00',
+              slotMaxTime: '22:00:00',
+              allDaySlot: false,
               headerToolbar: {{
                 left: 'prev,next today',
                 center: 'title',
-                right: 'dayGridMonth,timeGridWeek'
+                right: 'dayGridMonth,timeGridWeek,timeGridDay'
               }},
               events: {eventi_json_str},
               dateClick: function(info) {{
-                var titolo = prompt("Inserisci il titolo dell'attività per il giorno " + info.dateStr + ":");
+                var titolo = prompt("Inserisci l'attività per lo slot " + info.dateStr.replace('T', ' alle ') + ":");
                 if (titolo) {{
                     var cat = prompt("Categoria (Produzione, Imbottigliamento, Fiera, Appuntamento, Evento):", "Appuntamento");
                     if (!cat) cat = "Appuntamento";
@@ -4054,13 +4064,17 @@ try:
                     else if (cLower.includes("imbottigli")) catF = "🔵 Imbottigliamento";
                     else if (cLower.includes("fiera")) catF = "🟢 Fiera";
                     else if (cLower.includes("evento")) catF = "🟠 Evento";
-                    else if (cLower.includes("appunt")) catF = "🟣 Appuntamento";
+                    else if (cLower.includes("appunt")) catF, catF = "🟣 Appuntamento";
                     
-                    window.parent.location.href = window.parent.location.pathname + "?nuovo_evento=" + encodeURIComponent(titolo) + "&cat=" + encodeURIComponent(catF) + "&data=" + info.dateStr;
+                    // Calcoliamo un'ora di fine stimata (es. +1 ora)
+                    var startDate = new Date(info.date);
+                    var endDate = new Date(startDate.getTime() + 60*60*1000);
+                    
+                    window.parent.location.href = window.parent.location.pathname + "?nuovo_evento=" + encodeURIComponent(titolo) + "&cat=" + encodeURIComponent(catF) + "&start=" + info.dateStr + "&end=" + endDate.toISOString();
                 }}
               }},
               eventClick: function(info) {{
-                alert("Scheda Attività:\\n\\n" + info.event.title + "\\nDal: " + info.event.startStr + (info.event.endStr ? " al " + info.event.endStr : ""));
+                alert("Scheda Attività:\\n\\n" + info.event.title + "\\nInizio: " + info.event.startStr.replace('T', ' ') + (info.event.endStr ? "\\nFine: " + info.event.endStr.replace('T', ' ') : ""));
               }}
             }});
             calendar.render();
@@ -4070,31 +4084,7 @@ try:
     </html>
     """
     
-    components.html(calendar_html, height=450)
-
-    # Esportazione .ICS
-    if eventi_db:
-        def genera_ics(lista_eventi):
-            ics_lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//BrewDesk//IT", "CALSCALE:GREGORIAN", "METHOD:PUBLISH"]
-            for item in lista_eventi:
-                dt_start = item[3].replace("-", "")
-                dt_end = item[4].replace("-", "")
-                ics_lines.extend([
-                    "BEGIN:VEVENT",
-                    f"SUMMARY:[{item[2]}] {item[1]}",
-                    f"DTSTART;VALUE=DATE:{dt_start}",
-                    f"DTEND;VALUE=DATE:{dt_end}",
-                    "END:VEVENT"
-                ])
-            ics_lines.append("END:VCALENDAR")
-            return "\n".join(ics_lines)
-
-        st.download_button(
-            label="📥 Esporta .ICS (Google / iOS)",
-            data=genera_ics(eventi_db),
-            file_name="agenda_birrificio.ics",
-            mime="text/calendar"
-        )
+    components.html(calendar_html, height=530)
 
 except Exception as e:
-    st.error(f"Errore caricamento agenda: {e}")
+    st.error(f"Errore: {e}")

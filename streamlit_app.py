@@ -3928,11 +3928,10 @@ with tab12:
         st.error(f"Errore nella scheda Scadenze & Promemoria: {_e_tab12}")
 
 # ==========================================
-# MODULO: AGENDA & PIANIFICAZIONE (INTERATTIVO)
+# MODULO: AGENDA & PIANIFICAZIONE (DEFINITIVO)
 # ==========================================
 st.header("📅 Agenda & Pianificazione")
 
-# Categorie disponibili con le relative emoji e colori
 CATEGORIE_MAP = {
     "🟡 Produzione": "#EAB308",
     "🔵 Imbottigliamento": "#0EA5E9",
@@ -3941,11 +3940,11 @@ CATEGORIE_MAP = {
     "🟠 Evento": "#F97316"
 }
 
-# Gestione inserimento evento rapido via form
+# 1. Form classico di inserimento
 with st.form("form_aggiungi_evento", clear_on_submit=True):
     col1, col2, col3 = st.columns([2, 2, 1])
     with col1:
-        titolo_evento = st.text_input("Attività", placeholder="Es. Riunione fornitore")
+        titolo_evento = st.text_input("Attività", placeholder="Es. Cotta Belgian Blonde")
         categoria_evento = st.selectbox("Categoria", list(CATEGORIE_MAP.keys()))
     with col2:
         data_inizio = st.date_input("Inizio", value=datetime.today().date())
@@ -3955,19 +3954,22 @@ with st.form("form_aggiungi_evento", clear_on_submit=True):
         submit_evento = st.form_submit_button("➕ Aggiungi")
     
     if submit_evento and titolo_evento:
-        with get_connection() as conn:
-            with conn.cursor() as c:
-                c.execute(
-                    "INSERT INTO eventi_agenda (titolo, categoria, data_inizio, data_fine) VALUES (%s, %s, %s, %s)",
-                    (titolo_evento, categoria_evento, str(data_inizio), str(data_fine))
-                )
-                conn.commit()
-        st.success("Aggiunto!")
-        st.rerun()
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as c:
+                    c.execute(
+                        "INSERT INTO eventi_agenda (titolo, categoria, data_inizio, data_fine) VALUES (%s, %s, %s, %s)",
+                        (titolo_evento, categoria_evento, str(data_inizio), str(data_fine))
+                    )
+                    conn.commit()
+            st.success("Evento salvato con successo!")
+            st.rerun()
+        except Exception as ex:
+            st.error(f"Errore di salvataggio: {ex}")
 
-# Recupero eventi da Neon
+# 2. Recupero eventi da Neon per il calendario
 try:
-    with get_connection() as conn:
+    with get_db_connection() as conn:
         with conn.cursor() as c:
             c.execute("SELECT id, titolo, categoria, data_inizio, data_fine FROM eventi_agenda ORDER BY data_inizio ASC")
             eventi_db = c.fetchall()
@@ -3975,7 +3977,6 @@ try:
     eventi_js = []
     for ev in eventi_db:
         cat_nome = ev[2]
-        # Assegna il colore in base alla categoria salvata
         colore = CATEGORIE_MAP.get(cat_nome, "#3B82F6")
         eventi_js.append({
             "id": ev[0],
@@ -3986,7 +3987,7 @@ try:
         })
     eventi_json_str = json.dumps(eventi_js)
 
-    # Calendario con FullCalendar
+    # 3. Render Calendario Ultra-Compatto (Mese / Settimana + Click Dettagli)
     calendar_html = f"""
     <!DOCTYPE html>
     <html lang="it">
@@ -4000,8 +4001,7 @@ try:
             .fc-col-header-cell-cushion, .fc-daygrid-day-number {{ color: #ffffff !important; text-decoration: none; padding: 2px !important; }}
             .fc-button-primary {{ background-color: #2563eb !important; border-color: #2563eb !important; padding: 2px 6px !important; font-size: 0.75rem !important; }}
             .fc-toolbar-title {{ font-size: 0.95rem !important; }}
-            .fc-daygrid-day-frame {{ min-height: 40px !important; cursor: pointer; }}
-            .fc-daygrid-day:hover {{ background-color: rgba(37, 99, 235, 0.1); }}
+            .fc-daygrid-day-frame {{ min-height: 40px !important; }}
             .fc-event {{ cursor: pointer; font-size: 0.75rem; padding: 1px 3px; }}
         </style>
     </head>
@@ -4019,23 +4019,6 @@ try:
                 right: 'dayGridMonth,timeGridWeek'
               }},
               events: {eventi_json_str},
-              dateClick: function(info) {{
-                var titolo = prompt("Inserisci il titolo dell'attività per il giorno " + info.dateStr + ":");
-                if (titolo) {{
-                    var cat = prompt("Categoria (scegli tra: Produzione, Imbottigliamento, Fiera, Appuntamento, Evento):", "Appuntamento");
-                    if (!cat) cat = "Appuntamento";
-                    
-                    var catF = "🟣 Appuntamento";
-                    var cLower = cat.toLowerCase();
-                    if (cLower.includes("produz")) catF = "🟡 Produzione";
-                    else if (cLower.includes("imbottigli")) catF = "🔵 Imbottigliamento";
-                    else if (cLower.includes("fiera")) catF = "🟢 Fiera";
-                    else if (cLower.includes("evento")) catF = "🟠 Evento";
-                    else if (cLower.includes("appunt")) catF = "🟣 Appuntamento";
-                    
-                    window.parent.location.href = window.parent.location.pathname + "?nuovo_evento=" + encodeURIComponent(titolo) + "&cat=" + encodeURIComponent(catF) + "&data=" + info.dateStr;
-                }}
-              }},
               eventClick: function(info) {{
                 alert("Scheda Attività:\\n\\n" + info.event.title + "\\nDal: " + info.event.startStr + (info.event.endStr ? " al " + info.event.endStr : ""));
               }}
@@ -4048,29 +4031,6 @@ try:
     """
     
     components.html(calendar_html, height=450)
-
-   # Gestione inserimento rapido da click sul calendario (Risolto)
-    query_params = st.query_params
-    if "nuovo_evento" in query_params:
-        t_titolo = query_params["nuovo_evento"]
-        t_cat = query_params.get("cat", "🟣 Appuntamento")
-        t_data = query_params.get("data", str(datetime.today().date()))
-        
-        # Pulisce subito i parametri per evitare loop o doppi inserimenti al refresh
-        st.query_params.clear()
-        
-        try:
-            with get_connection() as conn:
-                with conn.cursor() as c:
-                    c.execute(
-                        "INSERT INTO eventi_agenda (titolo, categoria, data_inizio, data_fine) VALUES (%s, %s, %s, %s)",
-                        (t_titolo, t_cat, t_data, t_data)
-                    )
-                    conn.commit()
-            st.success(f"Evento '{t_titolo}' salvato con successo!")
-            st.rerun()
-        except Exception as ex:
-            st.error(f"Errore salvataggio rapido su Neon: {ex}")
 
     # Esportazione .ICS
     if eventi_db:
@@ -4097,7 +4057,4 @@ try:
         )
 
 except Exception as e:
-    st.error(f"Errore: {e}")
-
-except Exception as e:
-    st.error(f"Errore: {e}")
+    st.error(f"Errore caricamento agenda: {e}")

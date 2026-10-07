@@ -200,7 +200,7 @@ def _set_connection_tenant(conn, tenant_id: str | None):
     if not tenant_id:
         return
     with conn.cursor() as c:
-        c.execute("SET LOCAL app.azienda_id = %s;", (tenant_id,))
+        c.execute("SET app.azienda_id = %s;", (tenant_id,))
 def _configure_tenant_security(cursor, tables, legacy_tenant):
     """Aggiunge azienda_id, migra i record legacy e abilita RLS sulle tabelle operative."""
     for table in tables:

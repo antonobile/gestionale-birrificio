@@ -3920,10 +3920,11 @@ with tab12:
         st.error(f"Errore nella scheda Scadenze & Promemoria: {_e_tab12}")
 
 # ==========================================
-# MODULO: AGENDA & PIANIFICAZIONE (EVENTI)
+# MODULO: AGENDA & PIANIFICAZIONE (VISUALE)
 # ==========================================
 st.header("📅 Agenda & Pianificazione Birrificio")
 
+# 1. Form per aggiungere eventi (rapido e pulito)
 with st.form("form_aggiungi_evento"):
     st.subheader("Aggiungi Attività / Evento")
     col1, col2 = st.columns(2)
@@ -3934,8 +3935,8 @@ with st.form("form_aggiungi_evento"):
             ["🟡 Produzione", "🔵 Imbottigliamento", "🟢 Manifestazione / Fiera"]
         )
     with col2:
-        data_inizio = st.date_input("Data Inizio", value=date.today())
-        data_fine = st.date_input("Data Fine", value=date.today())
+        data_inizio = st.date_input("Data Inizio", value=datetime.today().date())
+        data_fine = st.date_input("Data Fine", value=datetime.today().date())
     
     submit_evento = st.form_submit_button("Registra in Agenda")
     
@@ -3958,26 +3959,67 @@ with st.form("form_aggiungi_evento"):
 
 st.divider()
 
-# Visualizzazione eventi esistenti dal database Neon
-st.subheader("Prossimi Eventi in Agenda")
+# 2. Recupero eventi da Neon per il calendario visivo
 try:
     with get_connection() as conn:
         with conn.cursor() as c:
-            c.execute("SELECT titolo, categoria, data_inizio, data_fine FROM eventi_agenda ORDER BY data_inizio ASC")
-            eventi = c.fetchall()
+            c.execute("SELECT titolo, categoria, data_inizio, data_fine FROM eventi_agenda")
+            eventi_db = c.fetchall()
             
-    if eventi:
-        for ev in eventi:
-            titolo, categoria, d_inizio, d_fine = ev
-            colore_badge = "🟡" if "Produzione" in categoria else ("🔵" if "Imbottigliamento" in categoria else "🟢")
-            st.markdown(f"""
-            <div style="background: #262730; padding: 10px 15px; border-radius: 8px; margin-bottom: 8px; border-left: 5px solid #7c3aed;">
-                <strong>{colore_badge} {titolo}</strong><br>
-                <small style="color: #a3a8b8;">Categoria: {categoria} | Dal <strong>{d_inizio}</strong> al <strong>{d_fine}</strong></small>
-            </div>
-            """, unsafe_allow_html=True)
-            
-        # Generazione ed Esportazione file .ICS per Google Calendar / iOS
+    eventi_js = []
+    for ev in eventi_db:
+        colore = "#EAB308" if "Produzione" in ev[1] else ("#0EA5E9" if "Imbottigliamento" in ev[1] else "#22C55E")
+        eventi_js.append({
+            "title": f"[{ev[1]}] {ev[0]}",
+            "start": ev[2],
+            "end": ev[3],
+            "color": colore
+        })
+    eventi_json_str = json.dumps(eventi_js)
+
+    # 3. Renderizzazione del Calendario Grafico tramite Componente HTML isolato
+    calendar_html = f"""
+    <!DOCTYPE html>
+    <html lang="it">
+    <head>
+        <meta charset="utf-8">
+        <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js'></script>
+        <style>
+            body {{ background-color: #0e1117; color: #ffffff; font-family: -apple-system, sans-serif; margin: 0; padding: 10px; }}
+            #calendar {{ max-width: 100%; margin: 0 auto; background: #1a1c24; padding: 15px; border-radius: 12px; }}
+            .fc {{ color: #ffffff; }}
+            .fc-col-header-cell-cushion, .fc-daygrid-day-number {{ color: #ffffff !important; text-decoration: none; }}
+            .fc-button-primary {{ background-color: #2563eb !important; border-color: #2563eb !important; }}
+            .fc-toolbar-title {{ font-size: 1.2rem !important; }}
+        </style>
+    </head>
+    <body>
+        <div id='calendar'></div>
+        <script>
+          document.addEventListener('DOMContentLoaded', function() {{
+            var calendarEl = document.getElementById('calendar');
+            var calendar = new FullCalendar.Calendar(calendarEl, {{
+              initialView: 'dayGridMonth',
+              locale: 'it',
+              headerToolbar: {{
+                left: 'prev,next today',
+                center: 'title',
+                right: 'dayGridMonth,timeGridWeek'
+              }},
+              events: {eventi_json_str}
+            }});
+            calendar.render();
+          }});
+        </script>
+    </body>
+    </html>
+    """
+    
+    st.subheader("Vista Calendario Interattivo")
+    components.html(calendar_html, height=520)
+
+    # 4. Pulsante di esportazione .ICS per Google / iOS
+    if eventi_db:
         def genera_ics(lista_eventi):
             ics_lines = [
                 "BEGIN:VCALENDAR",
@@ -4001,7 +4043,7 @@ try:
             ics_lines.append("END:VCALENDAR")
             return "\n".join(ics_lines)
 
-        ics_content = genera_ics(eventi)
+        ics_content = genera_ics(eventi_db)
         st.download_button(
             label="📥 Esporta Agenda (.ics per Google Calendar / iOS)",
             data=ics_content,
@@ -4009,7 +4051,6 @@ try:
             mime="text/calendar",
             help="Scarica il file compatibile con smartphone Apple e Google Calendar"
         )
-    else:
-        st.info("Nessun evento registrato in agenda.")
+
 except Exception as e:
-    st.error(f"Errore di caricamento eventi dal database: {e}")
+    st.error(f"Errore di caricamento del calendario dal database: {e}")

@@ -3977,7 +3977,7 @@ try:
         })
     eventi_json_str = json.dumps(eventi_js)
 
-    # 3. Renderizzazione del Calendario Grafico tramite Componente HTML isolato
+   # 3. Renderizzazione del Calendario Grafico tramite Componente HTML isolato (con altezza ottimizzata)
     calendar_html = f"""
     <!DOCTYPE html>
     <html lang="it">
@@ -3985,12 +3985,13 @@ try:
         <meta charset="utf-8">
         <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js'></script>
         <style>
-            body {{ background-color: #0e1117; color: #ffffff; font-family: -apple-system, sans-serif; margin: 0; padding: 10px; }}
-            #calendar {{ max-width: 100%; margin: 0 auto; background: #1a1c24; padding: 15px; border-radius: 12px; }}
-            .fc {{ color: #ffffff; }}
+            body {{ background-color: #0e1117; color: #ffffff; font-family: -apple-system, sans-serif; margin: 0; padding: 0; }}
+            #calendar {{ max-width: 100%; margin: 0 auto; background: #1a1c24; padding: 10px; border-radius: 12px; }}
+            .fc {{ color: #ffffff; font-size: 0.9rem; }}
             .fc-col-header-cell-cushion, .fc-daygrid-day-number {{ color: #ffffff !important; text-decoration: none; }}
-            .fc-button-primary {{ background-color: #2563eb !important; border-color: #2563eb !important; }}
-            .fc-toolbar-title {{ font-size: 1.2rem !important; }}
+            .fc-button-primary {{ background-color: #2563eb !important; border-color: #2563eb !important; padding: 4px 10px !important; }}
+            .fc-toolbar-title {{ font-size: 1.1rem !important; }}
+            .fc-daygrid-day-frame {{ min-height: 70px !important; }}
         </style>
     </head>
     <body>
@@ -4016,7 +4017,7 @@ try:
     """
     
     st.subheader("Vista Calendario Interattivo")
-    components.html(calendar_html, height=520)
+    components.html(calendar_html, height=680)
 
     # 4. Pulsante di esportazione .ICS per Google / iOS
     if eventi_db:

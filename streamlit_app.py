@@ -3928,7 +3928,7 @@ with tab12:
         st.error(f"Errore nella scheda Scadenze & Promemoria: {_e_tab12}")
 
 # ==========================================
-# MODULO: AGENDA & PIANIFICAZIONE (COMPLETO)
+# MODULO: AGENDA & PIANIFICAZIONE (OTTIMIZZATO E VELOCE)
 # ==========================================
 st.header("📅 Agenda & Pianificazione")
 
@@ -3939,6 +3939,14 @@ CATEGORIE_MAP = {
     "🟣 Appuntamento": "#A855F7",
     "🟠 Evento": "#F97316"
 }
+
+# Funzione con cache per evitare query lente a Neon a ogni click
+@st.cache_data(ttl=30, show_spinner=False)
+def carica_eventi_agenda():
+    with get_db_connection() as conn:
+        with conn.cursor() as c:
+            c.execute("SELECT id, titolo, categoria, data_inizio, data_fine FROM eventi_agenda ORDER BY data_inizio ASC")
+            return c.fetchall()
 
 # 1. Gestione inserimento rapido da click sul calendario
 query_params = st.query_params
@@ -3958,12 +3966,14 @@ if "nuovo_evento" in query_params:
                     (t_titolo, t_cat, t_start, t_end)
                 )
                 conn.commit()
-        st.success(f"Attività '{t_titolo}' salvata con successo!")
+        # Puliamo la cache così i dati si aggiornano subito
+        carica_eventi_agenda.clear()
+        st.success(f"Attività '{t_titolo}' salvata!")
         st.rerun()
     except Exception as ex:
         st.error(f"Errore di salvataggio: {ex}")
 
-# 2. Form di inserimento manuale (con fasce orarie)
+# 2. Form di inserimento manuale
 with st.form("form_aggiungi_evento", clear_on_submit=True):
     col1, col2, col3 = st.columns([2, 2, 1])
     with col1:
@@ -3990,17 +4000,15 @@ with st.form("form_aggiungi_evento", clear_on_submit=True):
                         (titolo_evento, categoria_evento, dt_start_str, dt_end_str)
                     )
                     conn.commit()
+            carica_eventi_agenda.clear()
             st.success("Evento salvato!")
             st.rerun()
         except Exception as ex:
             st.error(f"Errore: {ex}")
 
-# 3. Recupero eventi da Neon
+# 3. Caricamento rapido tramite cache
 try:
-    with get_db_connection() as conn:
-        with conn.cursor() as c:
-            c.execute("SELECT id, titolo, categoria, data_inizio, data_fine FROM eventi_agenda ORDER BY data_inizio ASC")
-            eventi_db = c.fetchall()
+    eventi_db = carica_eventi_agenda()
             
     eventi_js = []
     for ev in eventi_db:
@@ -4015,7 +4023,7 @@ try:
         })
     eventi_json_str = json.dumps(eventi_js)
 
-    # 4. Render FullCalendar (Mese, Settimana Oraria, Giorno Orario)
+    # 4. Render FullCalendar alleggerito
     calendar_html = f"""
     <!DOCTYPE html>
     <html lang="it">
@@ -4082,7 +4090,7 @@ try:
     
     components.html(calendar_html, height=530)
 
-    # 5. Sezione Gestione (Modifica / Elimina)
+    # 5. Sezione Gestione (Modifica / Elimina) con pulizia cache immediata
     if eventi_db:
         st.markdown("---")
         with st.expander("⚙️ Modifica o Elimina Eventi Esistenti"):
@@ -4115,7 +4123,8 @@ try:
                                 (mod_titolo, mod_cat, mod_start, mod_end, ev_id_selezionato)
                             )
                             conn.commit()
-                    st.success("Evento aggiornato con successo!")
+                    carica_eventi_agenda.clear()
+                    st.success("Aggiornato!")
                     st.rerun()
                 
                 if btn_elimina:
@@ -4123,15 +4132,15 @@ try:
                         with conn.cursor() as c:
                             c.execute("DELETE FROM eventi_agenda WHERE id=%s", (ev_id_selezionato,))
                             conn.commit()
-                    st.success("Evento eliminato!")
+                    carica_eventi_agenda.clear()
+                    st.success("Eliminato!")
                     st.rerun()
 
-    # 6. Esportazione .ICS (Google / iOS)
+    # 6. Esportazione .ICS
     if eventi_db:
         def genera_ics(lista_eventi):
             ics_lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//BrewDesk//IT", "CALSCALE:GREGORIAN", "METHOD:PUBLISH"]
             for item in lista_eventi:
-                # Gestisce formato standard o con timestamp T
                 dt_start = item[3].replace("-", "").replace(":", "").replace("T", "")
                 if len(dt_start) == 12: dt_start += "00"
                 dt_end = item[4].replace("-", "").replace(":", "").replace("T", "") if item[4] else dt_start
@@ -4155,4 +4164,4 @@ try:
         )
 
 except Exception as e:
-    st.error(f"Errore caricamento modulo agenda: {e}")
+    st.error(f"Errore: {e}")

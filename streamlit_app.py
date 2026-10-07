@@ -3928,7 +3928,7 @@ with tab12:
         st.error(f"Errore nella scheda Scadenze & Promemoria: {_e_tab12}")
 
 # ==========================================
-# MODULO: AGENDA & PIANIFICAZIONE (DEFINITIVO)
+# MODULO: AGENDA & PIANIFICAZIONE (INTERATTIVO AL CLICK)
 # ==========================================
 st.header("📅 Agenda & Pianificazione")
 
@@ -3940,7 +3940,29 @@ CATEGORIE_MAP = {
     "🟠 Evento": "#F97316"
 }
 
-# 1. Form classico di inserimento
+# Gestione salvataggio da click sul calendario (tramite query params ripuliti)
+query_params = st.query_params
+if "nuovo_evento" in query_params:
+    t_titolo = query_params["nuovo_evento"]
+    t_cat = query_params.get("cat", "🟣 Appuntamento")
+    t_data = query_params.get("data", str(datetime.today().date()))
+    
+    st.query_params.clear()
+    
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as c:
+                c.execute(
+                    "INSERT INTO eventi_agenda (titolo, categoria, data_inizio, data_fine) VALUES (%s, %s, %s, %s)",
+                    (t_titolo, t_cat, t_data, t_data)
+                )
+                conn.commit()
+        st.success(f"Evento '{t_titolo}' salvato con successo per il giorno {t_data}!")
+        st.rerun()
+    except Exception as ex:
+        st.error(f"Errore di salvataggio: {ex}")
+
+# Form classico di inserimento rapido
 with st.form("form_aggiungi_evento", clear_on_submit=True):
     col1, col2, col3 = st.columns([2, 2, 1])
     with col1:
@@ -3967,7 +3989,7 @@ with st.form("form_aggiungi_evento", clear_on_submit=True):
         except Exception as ex:
             st.error(f"Errore di salvataggio: {ex}")
 
-# 2. Recupero eventi da Neon per il calendario
+# Recupero eventi da Neon
 try:
     with get_db_connection() as conn:
         with conn.cursor() as c:
@@ -3987,7 +4009,7 @@ try:
         })
     eventi_json_str = json.dumps(eventi_js)
 
-    # 3. Render Calendario Ultra-Compatto (Mese / Settimana + Click Dettagli)
+    # Render Calendario (Mese / Settimana + Click sul giorno + Click sull'evento)
     calendar_html = f"""
     <!DOCTYPE html>
     <html lang="it">
@@ -4001,7 +4023,8 @@ try:
             .fc-col-header-cell-cushion, .fc-daygrid-day-number {{ color: #ffffff !important; text-decoration: none; padding: 2px !important; }}
             .fc-button-primary {{ background-color: #2563eb !important; border-color: #2563eb !important; padding: 2px 6px !important; font-size: 0.75rem !important; }}
             .fc-toolbar-title {{ font-size: 0.95rem !important; }}
-            .fc-daygrid-day-frame {{ min-height: 40px !important; }}
+            .fc-daygrid-day-frame {{ min-height: 40px !important; cursor: pointer; }}
+            .fc-daygrid-day:hover {{ background-color: rgba(37, 99, 235, 0.15); }}
             .fc-event {{ cursor: pointer; font-size: 0.75rem; padding: 1px 3px; }}
         </style>
     </head>
@@ -4019,6 +4042,23 @@ try:
                 right: 'dayGridMonth,timeGridWeek'
               }},
               events: {eventi_json_str},
+              dateClick: function(info) {{
+                var titolo = prompt("Inserisci il titolo dell'attività per il giorno " + info.dateStr + ":");
+                if (titolo) {{
+                    var cat = prompt("Categoria (Produzione, Imbottigliamento, Fiera, Appuntamento, Evento):", "Appuntamento");
+                    if (!cat) cat = "Appuntamento";
+                    
+                    var catF = "🟣 Appuntamento";
+                    var cLower = cat.toLowerCase();
+                    if (cLower.includes("produz")) catF = "🟡 Produzione";
+                    else if (cLower.includes("imbottigli")) catF = "🔵 Imbottigliamento";
+                    else if (cLower.includes("fiera")) catF = "🟢 Fiera";
+                    else if (cLower.includes("evento")) catF = "🟠 Evento";
+                    else if (cLower.includes("appunt")) catF = "🟣 Appuntamento";
+                    
+                    window.parent.location.href = window.parent.location.pathname + "?nuovo_evento=" + encodeURIComponent(titolo) + "&cat=" + encodeURIComponent(catF) + "&data=" + info.dateStr;
+                }}
+              }},
               eventClick: function(info) {{
                 alert("Scheda Attività:\\n\\n" + info.event.title + "\\nDal: " + info.event.startStr + (info.event.endStr ? " al " + info.event.endStr : ""));
               }}

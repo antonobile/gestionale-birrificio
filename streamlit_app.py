@@ -7,7 +7,7 @@ import secrets
 import base64
 import json
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, date
 import psycopg2
 from psycopg2 import pool, Binary
 import xml.etree.ElementTree as ET

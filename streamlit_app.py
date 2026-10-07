@@ -4041,12 +4041,16 @@ try:
     
     components.html(calendar_html, height=450)
 
-    # Gestione inserimento rapido da click sul calendario
+   # Gestione inserimento rapido da click sul calendario (Risolto)
     query_params = st.query_params
     if "nuovo_evento" in query_params:
         t_titolo = query_params["nuovo_evento"]
         t_cat = query_params.get("cat", "🟣 Appuntamento")
         t_data = query_params.get("data", str(datetime.today().date()))
+        
+        # Pulisce subito i parametri per evitare loop o doppi inserimenti al refresh
+        st.query_params.clear()
+        
         try:
             with get_connection() as conn:
                 with conn.cursor() as c:
@@ -4055,10 +4059,10 @@ try:
                         (t_titolo, t_cat, t_data, t_data)
                     )
                     conn.commit()
-            st.query_params.clear()
+            st.success(f"Evento '{t_titolo}' salvato con successo!")
             st.rerun()
         except Exception as ex:
-            st.error(f"Errore salvataggio rapido: {ex}")
+            st.error(f"Errore salvataggio rapido su Neon: {ex}")
 
     # Esportazione .ICS
     if eventi_db:

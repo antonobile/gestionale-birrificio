@@ -1,0 +1,8 @@
+{
+  "name": "BrewDesk - Brewery Management Platform",
+  "description": "Sistema operativo e gestionale per birrifici artigianali: registro cotte, accise Dogane, magazzino materie prime e birra confezionata, tracciamento fusti, bollette e scadenze.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

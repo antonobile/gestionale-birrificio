@@ -3920,7 +3920,7 @@ with tab12:
         st.error(f"Errore nella scheda Scadenze & Promemoria: {_e_tab12}")
 
 # ==========================================
-# MODULO: AGENDA & PIANIFICAZIONE (ULTRA-COMPATTO)
+# MODULO: AGENDA & PIANIFICAZIONE (ULTRA-COMPATTO CON VISTA MESE/SETTIMANA)
 # ==========================================
 st.header("📅 Agenda & Pianificazione")
 
@@ -3957,7 +3957,6 @@ try:
             
     eventi_js = []
     for ev in eventi_db:
-        # ev[0] = id, ev[1] = titolo, ev[2] = categoria, ev[3] = inizio, ev[4] = fine
         colore = "#EAB308" if "Produzione" in ev[2] else ("#0EA5E9" if "Imbottigliamento" in ev[2] else "#22C55E")
         eventi_js.append({
             "id": ev[0],
@@ -3968,7 +3967,7 @@ try:
         })
     eventi_json_str = json.dumps(eventi_js)
 
-    # Calendario compatta con FullCalendar e alert interattivo al click sull'evento
+    # Calendario compatta con FullCalendar (Mese e Settimana attivi)
     calendar_html = f"""
     <!DOCTYPE html>
     <html lang="it">
@@ -3997,11 +3996,10 @@ try:
               headerToolbar: {{
                 left: 'prev,next today',
                 center: 'title',
-                right: 'dayGridMonth'
+                right: 'dayGridMonth,timeGridWeek'
               }},
               events: {eventi_json_str},
               eventClick: function(info) {{
-                // Mostra la scheda dettagliata dell'evento al click
                 alert("Scheda Attività:\\n\\n" + info.event.title + "\\nDal: " + info.event.startStr + (info.event.endStr ? " al " + info.event.endStr : ""));
               }}
             }});
@@ -4019,7 +4017,6 @@ try:
         def genera_ics(lista_eventi):
             ics_lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//BrewDesk//IT", "CALSCALE:GREGORIAN", "METHOD:PUBLISH"]
             for item in lista_eventi:
-                # item: id(0), titolo(1), categoria(2), ini(3), fin(4)
                 dt_start = item[3].replace("-", "")
                 dt_end = item[4].replace("-", "")
                 ics_lines.extend([

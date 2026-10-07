@@ -3928,7 +3928,7 @@ with tab12:
         st.error(f"Errore nella scheda Scadenze & Promemoria: {_e_tab12}")
 
 # ==========================================
-# MODULO: AGENDA & PIANIFICAZIONE (CON FASCE ORARIE)
+# MODULO: AGENDA & PIANIFICAZIONE (COMPLETO)
 # ==========================================
 st.header("📅 Agenda & Pianificazione")
 
@@ -3940,10 +3940,7 @@ CATEGORIE_MAP = {
     "🟠 Evento": "#F97316"
 }
 
-# Assicuriamoci che la tabella supporti data/ora (eseguito in automatico o gestito)
-# Nota: se la tabella esisteva già solo con date, usiamo stringhe YYYY-MM-DDTHH:MM per FullCalendar
-
-# Gestione salvataggio da click o form
+# 1. Gestione inserimento rapido da click sul calendario
 query_params = st.query_params
 if "nuovo_evento" in query_params:
     t_titolo = query_params["nuovo_evento"]
@@ -3966,7 +3963,7 @@ if "nuovo_evento" in query_params:
     except Exception as ex:
         st.error(f"Errore di salvataggio: {ex}")
 
-# Form classico con opzione orario
+# 2. Form di inserimento manuale (con fasce orarie)
 with st.form("form_aggiungi_evento", clear_on_submit=True):
     col1, col2, col3 = st.columns([2, 2, 1])
     with col1:
@@ -3993,12 +3990,12 @@ with st.form("form_aggiungi_evento", clear_on_submit=True):
                         (titolo_evento, categoria_evento, dt_start_str, dt_end_str)
                     )
                     conn.commit()
-            st.success("Evento con fascia oraria salvato!")
+            st.success("Evento salvato!")
             st.rerun()
         except Exception as ex:
             st.error(f"Errore: {ex}")
 
-# Recupero eventi da Neon
+# 3. Recupero eventi da Neon
 try:
     with get_db_connection() as conn:
         with conn.cursor() as c:
@@ -4018,7 +4015,7 @@ try:
         })
     eventi_json_str = json.dumps(eventi_js)
 
-    # Render Calendario con vista Oraria (TimeGrid) abilitata
+    # 4. Render FullCalendar (Mese, Settimana Oraria, Giorno Orario)
     calendar_html = f"""
     <!DOCTYPE html>
     <html lang="it">
@@ -4064,13 +4061,12 @@ try:
                     else if (cLower.includes("imbottigli")) catF = "🔵 Imbottigliamento";
                     else if (cLower.includes("fiera")) catF = "🟢 Fiera";
                     else if (cLower.includes("evento")) catF = "🟠 Evento";
-                    else if (cLower.includes("appunt")) catF, catF = "🟣 Appuntamento";
+                    else if (cLower.includes("appunt")) catF = "🟣 Appuntamento";
                     
-                    // Calcoliamo un'ora di fine stimata (es. +1 ora)
                     var startDate = new Date(info.date);
                     var endDate = new Date(startDate.getTime() + 60*60*1000);
                     
-                    window.parent.location.href = window.parent.location.pathname + "?nuovo_evento=" + encodeURIComponent(titolo) + "&cat=" + encodeURIComponent(catF) + "&start=" + info.dateStr + "&end=" + endDate.toISOString();
+                    window.parent.location.href = window.parent.location.pathname + "?nuovo_evento=" + encodeURIComponent(titolo) + "&cat=" + encodeURIComponent(catF) + "&start=" + info.dateStr + "&end=" + endDate.toISOString().slice(0,19);
                 }}
               }},
               eventClick: function(info) {{
@@ -4086,5 +4082,77 @@ try:
     
     components.html(calendar_html, height=530)
 
+    # 5. Sezione Gestione (Modifica / Elimina)
+    if eventi_db:
+        st.markdown("---")
+        with st.expander("⚙️ Modifica o Elimina Eventi Esistenti"):
+            opzioni_eventi = {f"[{ev[2]}] {ev[1]} ({ev[3].replace('T', ' ')})": ev[0] for ev in eventi_db}
+            ev_selezionato_label = st.selectbox("Seleziona evento da gestire", list(opzioni_eventi.keys()))
+            ev_id_selezionato = opzioni_eventi[ev_selezionato_label]
+            
+            ev_dettaglio = next(ev for ev in eventi_db if ev[0] == ev_id_selezionato)
+            
+            with st.form("form_modifica_evento"):
+                c_m1, c_m2 = st.columns(2)
+                with c_m1:
+                    mod_titolo = st.text_input("Titolo Attività", value=ev_dettaglio[1])
+                    mod_cat = st.selectbox("Categoria", list(CATEGORIE_MAP.keys()), index=list(CATEGORIE_MAP.keys()).index(ev_dettaglio[2]) if ev_dettaglio[2] in CATEGORIE_MAP else 0)
+                with c_m2:
+                    mod_start = st.text_input("Inizio (YYYY-MM-DDTHH:MM)", value=ev_dettaglio[3])
+                    mod_end = st.text_input("Fine (YYYY-MM-DDTHH:MM)", value=ev_dettaglio[4] if ev_dettaglio[4] else ev_dettaglio[3])
+                
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    btn_aggiorna = st.form_submit_button("💾 Salva Modifiche")
+                with col_btn2:
+                    btn_elimina = st.form_submit_button("🗑️ Elimina Evento")
+                
+                if btn_aggiorna:
+                    with get_db_connection() as conn:
+                        with conn.cursor() as c:
+                            c.execute(
+                                "UPDATE eventi_agenda SET titolo=%s, categoria=%s, data_inizio=%s, data_fine=%s WHERE id=%s",
+                                (mod_titolo, mod_cat, mod_start, mod_end, ev_id_selezionato)
+                            )
+                            conn.commit()
+                    st.success("Evento aggiornato con successo!")
+                    st.rerun()
+                
+                if btn_elimina:
+                    with get_db_connection() as conn:
+                        with conn.cursor() as c:
+                            c.execute("DELETE FROM eventi_agenda WHERE id=%s", (ev_id_selezionato,))
+                            conn.commit()
+                    st.success("Evento eliminato!")
+                    st.rerun()
+
+    # 6. Esportazione .ICS (Google / iOS)
+    if eventi_db:
+        def genera_ics(lista_eventi):
+            ics_lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//BrewDesk//IT", "CALSCALE:GREGORIAN", "METHOD:PUBLISH"]
+            for item in lista_eventi:
+                # Gestisce formato standard o con timestamp T
+                dt_start = item[3].replace("-", "").replace(":", "").replace("T", "")
+                if len(dt_start) == 12: dt_start += "00"
+                dt_end = item[4].replace("-", "").replace(":", "").replace("T", "") if item[4] else dt_start
+                if len(dt_end) == 12: dt_end += "00"
+                
+                ics_lines.extend([
+                    "BEGIN:VEVENT",
+                    f"SUMMARY:[{item[2]}] {item[1]}",
+                    f"DTSTART:{dt_start}",
+                    f"DTEND:{dt_end}",
+                    "END:VEVENT"
+                ])
+            ics_lines.append("END:VCALENDAR")
+            return "\n".join(ics_lines)
+
+        st.download_button(
+            label="📥 Esporta .ICS (Sincronizza Google / Apple Calendar)",
+            data=genera_ics(eventi_db),
+            file_name="agenda_birrificio.ics",
+            mime="text/calendar"
+        )
+
 except Exception as e:
-    st.error(f"Errore: {e}")
+    st.error(f"Errore caricamento modulo agenda: {e}")

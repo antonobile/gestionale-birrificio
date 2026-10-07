@@ -16,6 +16,9 @@ import streamlit as st
 import streamlit.components.v1 as components
 from fpdf import FPDF
 from PIL import Image
+# Connessione al database PostgreSQL su Neon
+def get_connection():
+    return psycopg2.connect(st.secrets["DATABASE_URL"])
 
 # --- CONFIGURAZIONE BRANDING BREWDESK & LOGO ---
 LOGO_FILENAME = "brewdesk-icon-concept-1.png"

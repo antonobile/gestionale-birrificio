@@ -3920,64 +3920,55 @@ with tab12:
         st.error(f"Errore nella scheda Scadenze & Promemoria: {_e_tab12}")
 
 # ==========================================
-# MODULO: AGENDA & PIANIFICAZIONE (VISUALE)
+# MODULO: AGENDA & PIANIFICAZIONE (ULTRA-COMPATTO)
 # ==========================================
-st.header("📅 Agenda & Pianificazione Birrificio")
+st.header("📅 Agenda & Pianificazione")
 
-# 1. Form per aggiungere eventi (rapido e pulito)
-with st.form("form_aggiungi_evento"):
-    st.subheader("Aggiungi Attività / Evento")
-    col1, col2 = st.columns(2)
+# Form rapido per inserire eventi
+with st.form("form_aggiungi_evento", clear_on_submit=True):
+    col1, col2, col3 = st.columns([2, 2, 1])
     with col1:
-        titolo_evento = st.text_input("Titolo Attività (es. Cotta Belgian Blonde)")
-        categoria_evento = st.selectbox(
-            "Categoria", 
-            ["🟡 Produzione", "🔵 Imbottigliamento", "🟢 Manifestazione / Fiera"]
-        )
+        titolo_evento = st.text_input("Attività", placeholder="Es. Cotta Belgian Blonde")
+        categoria_evento = st.selectbox("Categoria", ["🟡 Produzione", "🔵 Imbottigliamento", "🟢 Fiera"])
     with col2:
-        data_inizio = st.date_input("Data Inizio", value=datetime.today().date())
-        data_fine = st.date_input("Data Fine", value=datetime.today().date())
+        data_inizio = st.date_input("Inizio", value=datetime.today().date())
+        data_fine = st.date_input("Fine", value=datetime.today().date())
+    with col3:
+        st.write("") # Spaziatura
+        submit_evento = st.form_submit_button("➕ Aggiungi")
     
-    submit_evento = st.form_submit_button("Registra in Agenda")
-    
-    if submit_evento:
-        if titolo_evento:
-            with get_connection() as conn:
-                with conn.cursor() as c:
-                    c.execute(
-                        """
-                        INSERT INTO eventi_agenda (titolo, categoria, data_inizio, data_fine)
-                        VALUES (%s, %s, %s, %s)
-                        """,
-                        (titolo_evento, categoria_evento, str(data_inizio), str(data_fine))
-                    )
-                    conn.commit()
-            st.success("Evento aggiunto con successo in agenda!")
-            st.rerun()
-        else:
-            st.warning("Inserisci un titolo valido per l'evento.")
+    if submit_evento and titolo_evento:
+        with get_connection() as conn:
+            with conn.cursor() as c:
+                c.execute(
+                    "INSERT INTO eventi_agenda (titolo, categoria, data_inizio, data_fine) VALUES (%s, %s, %s, %s)",
+                    (titolo_evento, categoria_evento, str(data_inizio), str(data_fine))
+                )
+                conn.commit()
+        st.success("Aggiunto!")
+        st.rerun()
 
-st.divider()
-
-# 2. Recupero eventi da Neon per il calendario visivo
+# Recupero rapido eventi da Neon
 try:
     with get_connection() as conn:
         with conn.cursor() as c:
-            c.execute("SELECT titolo, categoria, data_inizio, data_fine FROM eventi_agenda")
+            c.execute("SELECT id, titolo, categoria, data_inizio, data_fine FROM eventi_agenda ORDER BY data_inizio ASC")
             eventi_db = c.fetchall()
             
     eventi_js = []
     for ev in eventi_db:
-        colore = "#EAB308" if "Produzione" in ev[1] else ("#0EA5E9" if "Imbottigliamento" in ev[1] else "#22C55E")
+        # ev[0] = id, ev[1] = titolo, ev[2] = categoria, ev[3] = inizio, ev[4] = fine
+        colore = "#EAB308" if "Produzione" in ev[2] else ("#0EA5E9" if "Imbottigliamento" in ev[2] else "#22C55E")
         eventi_js.append({
-            "title": f"[{ev[1]}] {ev[0]}",
-            "start": ev[2],
-            "end": ev[3],
+            "id": ev[0],
+            "title": f"[{ev[2]}] {ev[1]}",
+            "start": ev[3],
+            "end": ev[4],
             "color": colore
         })
     eventi_json_str = json.dumps(eventi_js)
 
-   # 3. Renderizzazione del Calendario Grafico tramite Componente HTML isolato (con altezza ottimizzata)
+    # Calendario compatta con FullCalendar e alert interattivo al click sull'evento
     calendar_html = f"""
     <!DOCTYPE html>
     <html lang="it">
@@ -3985,13 +3976,14 @@ try:
         <meta charset="utf-8">
         <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js'></script>
         <style>
-            body {{ background-color: #0e1117; color: #ffffff; font-family: -apple-system, sans-serif; margin: 0; padding: 0; }}
-            #calendar {{ max-width: 100%; margin: 0 auto; background: #1a1c24; padding: 10px; border-radius: 12px; }}
-            .fc {{ color: #ffffff; font-size: 0.9rem; }}
-            .fc-col-header-cell-cushion, .fc-daygrid-day-number {{ color: #ffffff !important; text-decoration: none; }}
-            .fc-button-primary {{ background-color: #2563eb !important; border-color: #2563eb !important; padding: 4px 10px !important; }}
-            .fc-toolbar-title {{ font-size: 1.1rem !important; }}
-            .fc-daygrid-day-frame {{ min-height: 70px !important; }}
+            body {{ background-color: #0e1117; color: #ffffff; font-family: -apple-system, sans-serif; margin: 0; padding: 0; overflow: hidden; }}
+            #calendar {{ max-width: 100%; height: 420px; margin: 0 auto; background: #1a1c24; padding: 5px; border-radius: 8px; }}
+            .fc {{ color: #ffffff; font-size: 0.8rem; }}
+            .fc-col-header-cell-cushion, .fc-daygrid-day-number {{ color: #ffffff !important; text-decoration: none; padding: 2px !important; }}
+            .fc-button-primary {{ background-color: #2563eb !important; border-color: #2563eb !important; padding: 2px 6px !important; font-size: 0.75rem !important; }}
+            .fc-toolbar-title {{ font-size: 0.95rem !important; }}
+            .fc-daygrid-day-frame {{ min-height: 40px !important; }}
+            .fc-event {{ cursor: pointer; font-size: 0.75rem; padding: 1px 3px; }}
         </style>
     </head>
     <body>
@@ -4005,9 +3997,13 @@ try:
               headerToolbar: {{
                 left: 'prev,next today',
                 center: 'title',
-                right: 'dayGridMonth,timeGridWeek'
+                right: 'dayGridMonth'
               }},
-              events: {eventi_json_str}
+              events: {eventi_json_str},
+              eventClick: function(info) {{
+                // Mostra la scheda dettagliata dell'evento al click
+                alert("Scheda Attività:\\n\\n" + info.event.title + "\\nDal: " + info.event.startStr + (info.event.endStr ? " al " + info.event.endStr : ""));
+              }}
             }});
             calendar.render();
           }});
@@ -4016,42 +4012,32 @@ try:
     </html>
     """
     
-    st.subheader("Vista Calendario Interattivo")
-    components.html(calendar_html, height=680)
+    components.html(calendar_html, height=450)
 
-    # 4. Pulsante di esportazione .ICS per Google / iOS
+    # Esportazione .ICS compatta
     if eventi_db:
         def genera_ics(lista_eventi):
-            ics_lines = [
-                "BEGIN:VCALENDAR",
-                "VERSION:2.0",
-                "PRODID:-//BrewDesk//Agenda Birrificio//IT",
-                "CALSCALE:GREGORIAN",
-                "METHOD:PUBLISH"
-            ]
+            ics_lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//BrewDesk//IT", "CALSCALE:GREGORIAN", "METHOD:PUBLISH"]
             for item in lista_eventi:
-                t_titolo, t_cat, t_ini, t_fin = item
-                dt_start = t_ini.replace("-", "")
-                dt_end = t_fin.replace("-", "")
+                # item: id(0), titolo(1), categoria(2), ini(3), fin(4)
+                dt_start = item[3].replace("-", "")
+                dt_end = item[4].replace("-", "")
                 ics_lines.extend([
                     "BEGIN:VEVENT",
-                    f"SUMMARY:[{t_cat}] {t_titolo}",
+                    f"SUMMARY:[{item[2]}] {item[1]}",
                     f"DTSTART;VALUE=DATE:{dt_start}",
                     f"DTEND;VALUE=DATE:{dt_end}",
-                    f"DESCRIPTION:Attività di birrificio - Categoria: {t_cat}",
                     "END:VEVENT"
                 ])
             ics_lines.append("END:VCALENDAR")
             return "\n".join(ics_lines)
 
-        ics_content = genera_ics(eventi_db)
         st.download_button(
-            label="📥 Esporta Agenda (.ics per Google Calendar / iOS)",
-            data=ics_content,
+            label="📥 Esporta .ICS (Google / iOS)",
+            data=genera_ics(eventi_db),
             file_name="agenda_birrificio.ics",
-            mime="text/calendar",
-            help="Scarica il file compatibile con smartphone Apple e Google Calendar"
+            mime="text/calendar"
         )
 
 except Exception as e:
-    st.error(f"Errore di caricamento del calendario dal database: {e}")
+    st.error(f"Errore: {e}")

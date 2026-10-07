@@ -3916,11 +3916,97 @@ with tab12:
     except Exception as _e_tab12:
         st.error(f"Errore nella scheda Scadenze & Promemoria: {_e_tab12}")
 
-# =========================================================================
-# TAB 13: PIANIFICATORE COTTE CON EXPORT .ICS (NUOVO)
-# =========================================================================
-with tab13:
-    try:
-        render_tab_pianificatore()
-    except Exception as _e_tab13:
-        st.error(f"Errore nel Pianificatore Cotte: {_e_tab13}")
+# ==========================================
+# MODULO: AGENDA & PIANIFICAZIONE (EVENTI)
+# ==========================================
+st.header("📅 Agenda & Pianificazione Birrificio")
+
+with st.form("form_aggiungi_evento"):
+    st.subheader("Aggiungi Attività / Evento")
+    col1, col2 = st.columns(2)
+    with col1:
+        titolo_evento = st.text_input("Titolo Attività (es. Cotta Belgian Blonde)")
+        categoria_evento = st.selectbox(
+            "Categoria", 
+            ["🟡 Produzione", "🔵 Imbottigliamento", "🟢 Manifestazione / Fiera"]
+        )
+    with col2:
+        data_inizio = st.date_input("Data Inizio", value=date.today())
+        data_fine = st.date_input("Data Fine", value=date.today())
+    
+    submit_evento = st.form_submit_button("Registra in Agenda")
+    
+    if submit_evento:
+        if titolo_evento:
+            with get_connection() as conn:
+                with conn.cursor() as c:
+                    c.execute(
+                        """
+                        INSERT INTO eventi_agenda (titolo, categoria, data_inizio, data_fine)
+                        VALUES (%s, %s, %s, %s)
+                        """,
+                        (titolo_evento, categoria_evento, str(data_inizio), str(data_fine))
+                    )
+                    conn.commit()
+            st.success("Evento aggiunto con successo in agenda!")
+            st.rerun()
+        else:
+            st.warning("Inserisci un titolo valido per l'evento.")
+
+st.divider()
+
+# Visualizzazione eventi esistenti dal database Neon
+st.subheader("Prossimi Eventi in Agenda")
+try:
+    with get_connection() as conn:
+        with conn.cursor() as c:
+            c.execute("SELECT titolo, categoria, data_inizio, data_fine FROM eventi_agenda ORDER BY data_inizio ASC")
+            eventi = c.fetchall()
+            
+    if eventi:
+        for ev in eventi:
+            titolo, categoria, d_inizio, d_fine = ev
+            colore_badge = "🟡" if "Produzione" in categoria else ("🔵" if "Imbottigliamento" in categoria else "🟢")
+            st.markdown(f"""
+            <div style="background: #262730; padding: 10px 15px; border-radius: 8px; margin-bottom: 8px; border-left: 5px solid #7c3aed;">
+                <strong>{colore_badge} {titolo}</strong><br>
+                <small style="color: #a3a8b8;">Categoria: {categoria} | Dal <strong>{d_inizio}</strong> al <strong>{d_fine}</strong></small>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        # Generazione ed Esportazione file .ICS per Google Calendar / iOS
+        def genera_ics(lista_eventi):
+            ics_lines = [
+                "BEGIN:VCALENDAR",
+                "VERSION:2.0",
+                "PRODID:-//BrewDesk//Agenda Birrificio//IT",
+                "CALSCALE:GREGORIAN",
+                "METHOD:PUBLISH"
+            ]
+            for item in lista_eventi:
+                t_titolo, t_cat, t_ini, t_fin = item
+                dt_start = t_ini.replace("-", "")
+                dt_end = t_fin.replace("-", "")
+                ics_lines.extend([
+                    "BEGIN:VEVENT",
+                    f"SUMMARY:[{t_cat}] {t_titolo}",
+                    f"DTSTART;VALUE=DATE:{dt_start}",
+                    f"DTEND;VALUE=DATE:{dt_end}",
+                    f"DESCRIPTION:Attività di birrificio - Categoria: {t_cat}",
+                    "END:VEVENT"
+                ])
+            ics_lines.append("END:VCALENDAR")
+            return "\n".join(ics_lines)
+
+        ics_content = genera_ics(eventi)
+        st.download_button(
+            label="📥 Esporta Agenda (.ics per Google Calendar / iOS)",
+            data=ics_content,
+            file_name="agenda_birrificio.ics",
+            mime="text/calendar",
+            help="Scarica il file compatibile con smartphone Apple e Google Calendar"
+        )
+    else:
+        st.info("Nessun evento registrato in agenda.")
+except Exception as e:
+    st.error(f"Errore di caricamento eventi dal database: {e}")

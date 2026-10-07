@@ -3924,12 +3924,21 @@ with tab12:
 # ==========================================
 st.header("📅 Agenda & Pianificazione")
 
+# Categorie disponibili con le relative emoji e colori
+CATEGORIE_MAP = {
+    "🟡 Produzione": "#EAB308",
+    "🔵 Imbottigliamento": "#0EA5E9",
+    "🟢 Fiera": "#22C55E",
+    "🟣 Appuntamento": "#A855F7",
+    "🟠 Evento": "#F97316"
+}
+
 # Gestione inserimento evento rapido via form
 with st.form("form_aggiungi_evento", clear_on_submit=True):
     col1, col2, col3 = st.columns([2, 2, 1])
     with col1:
-        titolo_evento = st.text_input("Attività", placeholder="Es. Cotta Belgian Blonde")
-        categoria_evento = st.selectbox("Categoria", ["🟡 Produzione", "🔵 Imbottigliamento", "🟢 Fiera"])
+        titolo_evento = st.text_input("Attività", placeholder="Es. Riunione fornitore")
+        categoria_evento = st.selectbox("Categoria", list(CATEGORIE_MAP.keys()))
     with col2:
         data_inizio = st.date_input("Inizio", value=datetime.today().date())
         data_fine = st.date_input("Fine", value=datetime.today().date())
@@ -3957,17 +3966,19 @@ try:
             
     eventi_js = []
     for ev in eventi_db:
-        colore = "#EAB308" if "Produzione" in ev[2] else ("#0EA5E9" if "Imbottigliamento" in ev[2] else "#22C55E")
+        cat_nome = ev[2]
+        # Assegna il colore in base alla categoria salvata
+        colore = CATEGORIE_MAP.get(cat_nome, "#3B82F6")
         eventi_js.append({
             "id": ev[0],
-            "title": f"[{ev[2]}] {ev[1]}",
+            "title": f"[{cat_nome}] {ev[1]}",
             "start": ev[3],
             "end": ev[4],
             "color": colore
         })
     eventi_json_str = json.dumps(eventi_js)
 
-    # Calendario con FullCalendar (Mese/Settimana + Click sul giorno + Click sull'evento)
+    # Calendario con FullCalendar
     calendar_html = f"""
     <!DOCTYPE html>
     <html lang="it">
@@ -4000,19 +4011,23 @@ try:
                 right: 'dayGridMonth,timeGridWeek'
               }},
               events: {eventi_json_str},
-              // Cliccando su un giorno vuoto, chiede il titolo e inserisce l'evento tramite ricaricamento pagina
               dateClick: function(info) {{
                 var titolo = prompt("Inserisci il titolo dell'attività per il giorno " + info.dateStr + ":");
                 if (titolo) {{
-                    var cat = prompt("Categoria (digita: Produzione, Imbottigliamento o Fiera):", "Produzione");
-                    if (!cat) cat = "Produzione";
-                    var catF = cat.toLowerCase().includes("imbottigli") ? "🔵 Imbottigliamento" : (cat.toLowerCase().includes("fiera") ? "🟢 Fiera" : "🟡 Produzione");
+                    var cat = prompt("Categoria (scegli tra: Produzione, Imbottigliamento, Fiera, Appuntamento, Evento):", "Appuntamento");
+                    if (!cat) cat = "Appuntamento";
                     
-                    // Invio automatico tramite ricaricamento con parametri GET nascosti o ricarica pulita
+                    var catF = "🟣 Appuntamento";
+                    var cLower = cat.toLowerCase();
+                    if (cLower.includes("produz")) catF = "🟡 Produzione";
+                    else if (cLower.includes("imbottigli")) catF = "🔵 Imbottigliamento";
+                    else if (cLower.includes("fiera")) catF = "🟢 Fiera";
+                    else if (cLower.includes("evento")) catF = "🟠 Evento";
+                    else if (cLower.includes("appunt")) catF = "🟣 Appuntamento";
+                    
                     window.parent.location.href = window.parent.location.pathname + "?nuovo_evento=" + encodeURIComponent(titolo) + "&cat=" + encodeURIComponent(catF) + "&data=" + info.dateStr;
                 }}
               }},
-              // Cliccando su un evento esistente mostra i dettagli
               eventClick: function(info) {{
                 alert("Scheda Attività:\\n\\n" + info.event.title + "\\nDal: " + info.event.startStr + (info.event.endStr ? " al " + info.event.endStr : ""));
               }}
@@ -4026,11 +4041,11 @@ try:
     
     components.html(calendar_html, height=450)
 
-    # Gestione automatica dell'inserimento rapido tramite click sul calendario
+    # Gestione inserimento rapido da click sul calendario
     query_params = st.query_params
     if "nuovo_evento" in query_params:
         t_titolo = query_params["nuovo_evento"]
-        t_cat = query_params.get("cat", "🟡 Produzione")
+        t_cat = query_params.get("cat", "🟣 Appuntamento")
         t_data = query_params.get("data", str(datetime.today().date()))
         try:
             with get_connection() as conn:
@@ -4068,6 +4083,9 @@ try:
             file_name="agenda_birrificio.ics",
             mime="text/calendar"
         )
+
+except Exception as e:
+    st.error(f"Errore: {e}")
 
 except Exception as e:
     st.error(f"Errore: {e}")

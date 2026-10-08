@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   AziendaConfig,
+  Cliente,
   MateriaPrima,
   Imballaggio,
   Cotta,
@@ -17,6 +18,7 @@ import {
 } from './types';
 import {
   initialAzienda,
+  initialClienti,
   initialMateriePrime,
   initialImballaggi,
   initialCotte,
@@ -37,6 +39,7 @@ import { MetricCards } from './components/MetricCards';
 import { StickyNotes } from './components/StickyNotes';
 import { AuthScreen } from './components/AuthScreen';
 import { Sidebar, NavItemKey } from './components/Sidebar';
+import { SettingsModal } from './components/SettingsModal';
 
 // Tabs
 import { TabAcquisti } from './components/tabs/TabAcquisti';
@@ -45,6 +48,7 @@ import { TabCotta } from './components/tabs/TabCotta';
 import { TabImballaggi } from './components/tabs/TabImballaggi';
 import { TabConfezionamento } from './components/tabs/TabConfezionamento';
 import { TabVendite } from './components/tabs/TabVendite';
+import { TabClienti } from './components/tabs/TabClienti';
 import { TabIoT } from './components/tabs/TabIoT';
 import { TabFusti } from './components/tabs/TabFusti';
 import { TabBollette } from './components/tabs/TabBollette';
@@ -61,6 +65,7 @@ export const App: React.FC = () => {
 
   // Main business data states
   const [azienda, setAzienda] = useState<AziendaConfig>(() => loadStorage('azienda', initialAzienda));
+  const [clienti, setClienti] = useState<Cliente[]>(() => loadStorage('clienti', initialClienti));
   const [materiePrime, setMateriePrime] = useState<MateriaPrima[]>(() =>
     loadStorage('materie_prime', initialMateriePrime)
   );
@@ -114,12 +119,26 @@ export const App: React.FC = () => {
     loadStorage('pagina_corrente', 'cotta_cip')
   );
 
+  // Settings Modal State
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  // Dashboard KPI visibility toggle (mostra/nascondi barra contatori e materie prime)
+  const [showDashboard, setShowDashboard] = useState<boolean>(() =>
+    loadStorage('show_dashboard_kpis', true)
+  );
+
+  // Bacheca Post-It visibility toggle (mostra/nascondi bacheca annotazioni)
+  const [showPostIt, setShowPostIt] = useState<boolean>(() =>
+    loadStorage('show_post_it', true)
+  );
+
   // Auto-sync to storage
   useEffect(() => {
     saveStorage('pagina_corrente', activeKey);
     saveStorage('logged_in', isLoggedIn);
     saveStorage('current_user', currentUser);
     saveStorage('azienda', azienda);
+    saveStorage('clienti', clienti);
     saveStorage('materie_prime', materiePrime);
     saveStorage('imballaggi', imballaggi);
     saveStorage('cotte', cotte);
@@ -133,10 +152,13 @@ export const App: React.FC = () => {
     saveStorage('promemoria', promemoria);
     saveStorage('piani', piani);
     saveStorage('eventi_agenda', eventiAgenda);
+    saveStorage('show_dashboard_kpis', showDashboard);
+    saveStorage('show_post_it', showPostIt);
   }, [
     isLoggedIn,
     currentUser,
     azienda,
+    clienti,
     materiePrime,
     imballaggi,
     cotte,
@@ -150,6 +172,8 @@ export const App: React.FC = () => {
     promemoria,
     piani,
     eventiAgenda,
+    showDashboard,
+    showPostIt,
   ]);
 
   if (!isLoggedIn) {
@@ -172,8 +196,10 @@ export const App: React.FC = () => {
     );
   }
 
-  // Aggregate KPI Calculations
-  const totMostoLordo = cotte.reduce((acc, c) => acc + c.litri_mosto, 0);
+  // Aggregate KPI Calculations with Initial Counter Offset
+  const litriCotteSoftware = cotte.reduce((acc, c) => acc + c.litri_mosto, 0);
+  const offsetMostoIniziale = azienda.contatore_mosto_iniziale || 0;
+  const totMostoLordo = offsetMostoIniziale + litriCotteSoftware;
 
   const totBirraMagazzino = birraCondizionata.reduce(
     (acc, b) => acc + (b.tipo === 'CARICO' ? b.litri_totali : -b.litri_totali),
@@ -206,12 +232,13 @@ export const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-amber-50/40 via-yellow-50/20 to-stone-100/60 text-stone-900 flex">
-      {/* 1. Left Collapsible / Icon-Only Sidebar */}
+      {/* 1. Left Collapsible / Icon-Only Sidebar (Giacenze widget rimosso, logout sempre visibile e pulsante Impostazioni) */}
       <Sidebar
         activeKey={activeKey}
         onSelectKey={setActiveKey}
         azienda={azienda}
         onLogout={() => setIsLoggedIn(false)}
+        onOpenSettings={() => setIsSettingsOpen(true)}
         pendingDeadlinesCount={numScadenzeAperte}
       />
 
@@ -223,19 +250,30 @@ export const App: React.FC = () => {
             azienda={azienda}
             onUpdateAzienda={setAzienda}
             onLogout={() => setIsLoggedIn(false)}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+            showDashboard={showDashboard}
+            onToggleDashboard={() => setShowDashboard((prev) => !prev)}
           />
 
           {/* Main Dashboard & Content */}
           <main className="max-w-7xl mx-auto px-3 sm:px-6 py-6 space-y-6">
-            {/* Top KPI Cards */}
-            <MetricCards
-              totMostoLordo={totMostoLordo}
-              totBirraMagazzino={totBirraMagazzino}
-              fustiFuori={Math.max(0, fustiFuori)}
-              maltoResiduo={Math.max(0, maltoResiduo)}
-              luppoloResiduo={Math.max(0, luppoloResiduo)}
-              lievitoResiduo={Math.max(0, lievitoResiduo)}
-            />
+            {/* Top KPI Cards (visibilità controllata da toggle rapido - animazione fluida) */}
+            {showDashboard && (
+              <div className="transition-all duration-300 ease-in-out animate-in fade-in slide-in-from-top-2">
+                <MetricCards
+                  totMostoLordo={totMostoLordo}
+                  totBirraMagazzino={totBirraMagazzino}
+                  fustiFuori={Math.max(0, fustiFuori)}
+                  maltoResiduo={Math.max(0, maltoResiduo)}
+                  luppoloResiduo={Math.max(0, luppoloResiduo)}
+                  lievitoResiduo={Math.max(0, lievitoResiduo)}
+                  onNavigateToGiacenze={() => setActiveKey('giacenze_magazzino')}
+                  onNavigateToFusti={() => setActiveKey('fusti_pub')}
+                  onOpenCalibrazione={() => setIsSettingsOpen(true)}
+                  offsetMosto={offsetMostoIniziale}
+                />
+              </div>
+            )}
 
             {/* Sticky Notes Bulletin Board */}
             <StickyNotes
@@ -249,6 +287,8 @@ export const App: React.FC = () => {
               onDeleteNota={(id) => {
                 setNote(note.filter((n) => n.id !== id));
               }}
+              showPostIt={showPostIt}
+              onToggleShowPostIt={() => setShowPostIt((prev) => !prev)}
             />
 
             {/* Active Module View Rendering (no reload, instant switch) */}
@@ -281,8 +321,39 @@ export const App: React.FC = () => {
                   cotte={cotte}
                   ricette={ricette}
                   azienda={azienda}
-                  onAddCotta={(c) => setCotte([{ id: Date.now(), ...c }, ...cotte])}
-                  onDeleteCotta={(id) => setCotte(cotte.filter((c) => c.id !== id))}
+                  onAddCotta={(c) => {
+                    setCotte([{ id: Date.now(), ...c }, ...cotte]);
+                    // Se la cotta ha consumato materie prime, registra scarico automatico per aggiornamento dinamico in tempo reale
+                    if (c.malto_usato_kg > 0 || c.luppolo_usato_kg > 0 || c.lievito_usato_kg > 0) {
+                      setMateriePrime([
+                        {
+                          id: Date.now() + 1,
+                          tipo: 'SCARICO',
+                          data: c.data,
+                          riferimento: `Cotta ${c.cotta_num}`,
+                          azienda: `Produzione ${c.tipo_birra}`,
+                          malto_kg: c.malto_usato_kg,
+                          luppolo_kg: c.luppolo_usato_kg,
+                          lievito_kg: c.lievito_usato_kg,
+                          costo_malto_kg: 1.35,
+                          costo_luppolo_kg: 28.5,
+                          costo_lievito_kg: 64.0,
+                          costo_kg_medio: 1.35,
+                        },
+                        ...materiePrime,
+                      ]);
+                    }
+                  }}
+                  onDeleteCotta={(id) => {
+                    const cottaToDelete = cotte.find((c) => c.id === id);
+                    setCotte(cotte.filter((c) => c.id !== id));
+                    if (cottaToDelete) {
+                      // Rimuove anche lo scarico associato in materie prime
+                      setMateriePrime(
+                        materiePrime.filter((m) => m.riferimento !== `Cotta ${cottaToDelete.cotta_num}`)
+                      );
+                    }
+                  }}
                   onAddRicetta={(r) => setRicette([{ id: Date.now(), ...r }, ...ricette])}
                   onDeleteRicetta={(id) => setRicette(ricette.filter((r) => r.id !== id))}
                 />
@@ -314,14 +385,39 @@ export const App: React.FC = () => {
               {/* 6. vendite */}
               {activeKey === 'vendite' && (
                 <TabVendite
+                  clienti={clienti}
+                  vendite={birraCondizionata}
+                  ricette={ricette}
+                  azienda={azienda}
+                  onNavigateToClienti={() => setActiveKey('clienti')}
                   onAddScaricoVendita={(m) => {
                     setBirraCondizionata([{ id: Date.now(), ...m }, ...birraCondizionata]);
-                    setActiveKey('giacenze_magazzino');
                   }}
                 />
               )}
 
-              {/* 7. cantina IoT */}
+              {/* 7. anagrafica clienti */}
+              {activeKey === 'clienti' && (
+                <TabClienti
+                  clienti={clienti}
+                  onAddCliente={(c) => setClienti([{ id: Date.now(), ...c }, ...clienti])}
+                  onUpdateCliente={(id, upd) =>
+                    setClienti(clienti.map((c) => (c.id === id ? { ...c, ...upd } : c)))
+                  }
+                  onDeleteCliente={(id) => setClienti(clienti.filter((c) => c.id !== id))}
+                  onAddClientiBulk={(list) =>
+                    setClienti([
+                      ...list.map((c, i) => ({ id: Date.now() + i, ...c })),
+                      ...clienti,
+                    ])
+                  }
+                  fusti={tracciamentoFusti}
+                  vendite={birraCondizionata}
+                  onNavigateToVendite={() => setActiveKey('vendite')}
+                />
+              )}
+
+              {/* 8. cantina IoT */}
               {activeKey === 'cantina_iot' && (
                 <TabIoT
                   tanks={fermentatori}
@@ -372,6 +468,18 @@ export const App: React.FC = () => {
                       ]);
                     }
                   }}
+                  onDeleteMovimentoFusti={(id) =>
+                    setTracciamentoFusti(tracciamentoFusti.filter((f) => f.id !== id))
+                  }
+                  clienti={clienti}
+                  onAddCliente={(c) => setClienti([{ id: Date.now(), ...c }, ...clienti])}
+                  onAddClientiBulk={(list) =>
+                    setClienti([
+                      ...list.map((c, i) => ({ id: Date.now() + i, ...c })),
+                      ...clienti,
+                    ])
+                  }
+                  onDeleteCliente={(id) => setClienti(clienti.filter((c) => c.id !== id))}
                 />
               )}
 
@@ -399,6 +507,13 @@ export const App: React.FC = () => {
                   movimenti={birraCondizionata}
                   onDeleteMovimento={(id) =>
                     setBirraCondizionata(birraCondizionata.filter((b) => b.id !== id))
+                  }
+                  materiePrime={materiePrime}
+                  onAddMovimentoMp={(m) =>
+                    setMateriePrime([{ id: Date.now(), ...m }, ...materiePrime])
+                  }
+                  onDeleteMovimentoMp={(id) =>
+                    setMateriePrime(materiePrime.filter((m) => m.id !== id))
                   }
                 />
               )}
@@ -449,6 +564,15 @@ export const App: React.FC = () => {
           </p>
         </footer>
       </div>
+
+      {/* Settings Modal (Profilo aziendale, password e calibrazione contalitri mosto) */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        azienda={azienda}
+        onUpdateAzienda={setAzienda}
+        totLitriCotteSoftware={litriCotteSoftware}
+      />
     </div>
   );
 };

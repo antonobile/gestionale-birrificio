@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Cotta, MateriaPrima, Imballaggio, BirraCondizionata, AziendaConfig } from '../../types';
-import { generateDoganePdf, generateCommercialistaPdf } from '../../utils/pdfGenerator';
-import { FileText, Download, Scale, Briefcase } from 'lucide-react';
+import { generateDoganePdf, generateCommercialistaPdf, GeneratedPdfResult } from '../../utils/pdfGenerator';
+import { FileText, Download, Scale, Briefcase, CheckCircle2, ExternalLink, X, Loader2, Eye } from 'lucide-react';
 
 interface TabReportDoganeProps {
   cotte: Cotta[];
@@ -9,6 +9,13 @@ interface TabReportDoganeProps {
   imballaggi: Imballaggio[];
   birraCondizionata: BirraCondizionata[];
   azienda: AziendaConfig;
+}
+
+interface PdfPreviewModalState {
+  isOpen: boolean;
+  title: string;
+  filename: string;
+  url: string;
 }
 
 export const TabReportDogane: React.FC<TabReportDoganeProps> = ({
@@ -21,29 +28,35 @@ export const TabReportDogane: React.FC<TabReportDoganeProps> = ({
   const [annoBilancio, setAnnoBilancio] = useState(2026);
   const [tipoAliquota, setTipoAliquota] = useState<'micro' | 'ordinario'>('micro');
 
+  // Loading & Preview States
+  const [isGeneratingDogane, setIsGeneratingDogane] = useState(false);
+  const [isGeneratingComm, setIsGeneratingComm] = useState(false);
+  const [notificationMsg, setNotificationMsg] = useState<string | null>(null);
+  const [previewModal, setPreviewModal] = useState<PdfPreviewModalState | null>(null);
+
   const aliquotaCalcolo = tipoAliquota === 'micro' ? 1.49 : 2.98;
 
   // Filtra per anno
   const cotteAnno = cotte.filter((c) => c.data.startsWith(`${annoBilancio}`));
   const cotteTotN = cotteAnno.length;
-  const litriTotCotte = cotteAnno.reduce((acc, c) => acc + c.litri_mosto, 0);
-  const totMcGpl = cotteAnno.reduce((acc, c) => acc + c.consumo_gas_mc, 0);
-  const totKwhEle = cotteAnno.reduce((acc, c) => acc + c.consumo_elettrico_kwh, 0);
-  const mUsatoTot = cotteAnno.reduce((acc, c) => acc + c.malto_usato_kg, 0);
-  const lUsatoTot = cotteAnno.reduce((acc, c) => acc + c.luppolo_usato_kg, 0);
-  const yUsatoTotGr = cotteAnno.reduce((acc, c) => acc + c.lievito_usato_kg * 1000, 0);
+  const litriTotCotte = cotteAnno.reduce((acc, c) => acc + (c.litri_mosto || 0), 0);
+  const totMcGpl = cotteAnno.reduce((acc, c) => acc + (c.consumo_gas_mc || 0), 0);
+  const totKwhEle = cotteAnno.reduce((acc, c) => acc + (c.consumo_elettrico_kwh || 0), 0);
+  const mUsatoTot = cotteAnno.reduce((acc, c) => acc + (c.malto_usato_kg || 0), 0);
+  const lUsatoTot = cotteAnno.reduce((acc, c) => acc + (c.luppolo_usato_kg || 0), 0);
+  const yUsatoTotGr = cotteAnno.reduce((acc, c) => acc + ((c.lievito_usato_kg || 0) * 1000), 0);
   const resaMedia =
-    cotteAnno.length > 0 ? cotteAnno.reduce((acc, c) => acc + c.resa_perc, 0) / cotteAnno.length : 78.0;
+    cotteAnno.length > 0 ? cotteAnno.reduce((acc, c) => acc + (c.resa_perc || 0), 0) / cotteAnno.length : 78.0;
 
   const mpAcqAnno = materiePrime.filter((m) => m.tipo === 'CARICO' && m.data.startsWith(`${annoBilancio}`));
-  const mAcqTot = mpAcqAnno.reduce((acc, m) => acc + m.malto_kg, 0);
-  const lAcqTot = mpAcqAnno.reduce((acc, m) => acc + m.luppolo_kg, 0);
-  const yAcqTotGr = mpAcqAnno.reduce((acc, m) => acc + m.lievito_kg * 1000, 0);
+  const mAcqTot = mpAcqAnno.reduce((acc, m) => acc + (m.malto_kg || 0), 0);
+  const lAcqTot = mpAcqAnno.reduce((acc, m) => acc + (m.luppolo_kg || 0), 0);
+  const yAcqTotGr = mpAcqAnno.reduce((acc, m) => acc + ((m.lievito_kg || 0) * 1000), 0);
 
   // Formati confezionati nell'anno
   const confAnno = birraCondizionata.filter((b) => b.tipo === 'CARICO' && b.data.startsWith(`${annoBilancio}`));
   const countFormato = (fmt: string) =>
-    confAnno.filter((b) => b.formato === fmt).reduce((acc, b) => acc + b.quantita, 0);
+    confAnno.filter((b) => b.formato === fmt).reduce((acc, b) => acc + (b.quantita || 0), 0);
 
   const nB33 = countFormato('Bottiglia 0.33L');
   const nB75 = countFormato('Bottiglia 0.75L');
@@ -54,11 +67,11 @@ export const TabReportDogane: React.FC<TabReportDoganeProps> = ({
   const nF30 = countFormato('Fusto 30L');
 
   // Giacenze attuali complessive
-  const giacM = materiePrime.reduce((acc, m) => acc + (m.tipo === 'CARICO' ? m.malto_kg : -m.malto_kg), 0);
-  const giacL = materiePrime.reduce((acc, m) => acc + (m.tipo === 'CARICO' ? m.luppolo_kg : -m.luppolo_kg), 0);
-  const giacY = materiePrime.reduce((acc, m) => acc + (m.tipo === 'CARICO' ? m.lievito_kg : -m.lievito_kg), 0);
+  const giacM = materiePrime.reduce((acc, m) => acc + (m.tipo === 'CARICO' ? (m.malto_kg || 0) : -(m.malto_kg || 0)), 0);
+  const giacL = materiePrime.reduce((acc, m) => acc + (m.tipo === 'CARICO' ? (m.luppolo_kg || 0) : -(m.luppolo_kg || 0)), 0);
+  const giacY = materiePrime.reduce((acc, m) => acc + (m.tipo === 'CARICO' ? (m.lievito_kg || 0) : -(m.lievito_kg || 0)), 0);
   const giacBirraLt = birraCondizionata.reduce(
-    (acc, b) => acc + (b.tipo === 'CARICO' ? b.litri_totali : -b.litri_totali),
+    (acc, b) => acc + (b.tipo === 'CARICO' ? (b.litri_totali || 0) : -(b.litri_totali || 0)),
     0
   );
 
@@ -70,7 +83,7 @@ export const TabReportDogane: React.FC<TabReportDoganeProps> = ({
 
   // Imballaggi valore
   const valImbTot = imballaggi.reduce(
-    (acc, i) => acc + (i.tipo_movimento === 'CARICO' ? i.quantita * i.costo_unitario : -i.quantita * i.costo_unitario),
+    (acc, i) => acc + (i.tipo_movimento === 'CARICO' ? (i.quantita || 0) * (i.costo_unitario || 0) : -(i.quantita || 0) * (i.costo_unitario || 0)),
     0
   );
 
@@ -79,53 +92,116 @@ export const TabReportDogane: React.FC<TabReportDoganeProps> = ({
   const totBilancio = valMpTot + Math.max(0, valImbTot) + valPfTot;
 
   const handleScaricaDoganePdf = () => {
-    generateDoganePdf({
-      anno: annoBilancio,
-      cotte_n: cotteTotN,
-      litri_cotte: litriTotCotte,
-      mc_gpl: totMcGpl,
-      kwh_ele: totKwhEle,
-      m_acq: mAcqTot,
-      m_usat: mUsatoTot,
-      l_acq: lAcqTot,
-      l_usat: lUsatoTot,
-      y_acq_g: yAcqTotGr,
-      y_usat_g: yUsatoTotGr,
-      b33: nB33,
-      b75: nB75,
-      f12: nF12,
-      f20: nF20,
-      f24: nF24,
-      f25: nF25,
-      f30: nF30,
-      giac_m: Math.max(0, giacM),
-      giac_l: Math.max(0, giacL),
-      giac_y: Math.max(0, giacY),
-      giac_birra_lt: Math.max(0, giacBirraLt),
-      resa_media: resaMedia,
-      ragione_soc: azienda.ragione_sociale,
-      piva_az: azienda.piva,
-      aliquota_acc: aliquotaCalcolo,
-    });
+    setIsGeneratingDogane(true);
+    setNotificationMsg(null);
+
+    try {
+      const result: GeneratedPdfResult = generateDoganePdf({
+        anno: annoBilancio,
+        cotte_n: cotteTotN,
+        litri_cotte: litriTotCotte,
+        mc_gpl: totMcGpl,
+        kwh_ele: totKwhEle,
+        m_acq: mAcqTot,
+        m_usat: mUsatoTot,
+        l_acq: lAcqTot,
+        l_usat: lUsatoTot,
+        y_acq_g: yAcqTotGr,
+        y_usat_g: yUsatoTotGr,
+        b33: nB33,
+        b75: nB75,
+        f12: nF12,
+        f20: nF20,
+        f24: nF24,
+        f25: nF25,
+        f30: nF30,
+        giac_m: Math.max(0, giacM),
+        giac_l: Math.max(0, giacL),
+        giac_y: Math.max(0, giacY),
+        giac_birra_lt: Math.max(0, giacBirraLt),
+        resa_media: resaMedia,
+        ragione_soc: azienda.ragione_sociale,
+        piva_az: azienda.piva,
+        cf_az: azienda.cf,
+        indirizzo_az: azienda.indirizzo,
+        pec_az: azienda.pec,
+        aliquota_acc: aliquotaCalcolo,
+      });
+
+      setPreviewModal({
+        isOpen: true,
+        title: `Bilancio Dogane Esercizio ${annoBilancio}`,
+        filename: result.filename,
+        url: result.url,
+      });
+
+      setNotificationMsg(`✅ File "${result.filename}" generato e scaricato con successo!`);
+      setTimeout(() => setNotificationMsg(null), 8000);
+    } catch (err) {
+      console.error('Errore generazione PDF Dogane:', err);
+      setNotificationMsg('❌ Errore durante la creazione del PDF Dogane.');
+    } finally {
+      setIsGeneratingDogane(false);
+    }
   };
 
   const handleScaricaCommercialistaPdf = () => {
-    generateCommercialistaPdf({
-      val_mp: valMpTot,
-      val_imb: Math.max(0, valImbTot),
-      val_pf: valPfTot,
-      tot_bilancio: totBilancio,
-      malto: Math.max(0, giacM),
-      luppolo: Math.max(0, giacL),
-      lievito: Math.max(0, giacY),
-      litri_pf: Math.max(0, giacBirraLt),
-      ragione_soc: azienda.ragione_sociale,
-      piva_az: azienda.piva,
-    });
+    setIsGeneratingComm(true);
+    setNotificationMsg(null);
+
+    try {
+      const result: GeneratedPdfResult = generateCommercialistaPdf({
+        anno: annoBilancio,
+        val_mp: valMpTot,
+        val_imb: Math.max(0, valImbTot),
+        val_pf: valPfTot,
+        tot_bilancio: totBilancio,
+        malto: Math.max(0, giacM),
+        luppolo: Math.max(0, giacL),
+        lievito: Math.max(0, giacY),
+        litri_pf: Math.max(0, giacBirraLt),
+        ragione_soc: azienda.ragione_sociale,
+        piva_az: azienda.piva,
+        cf_az: azienda.cf,
+        indirizzo_az: azienda.indirizzo,
+        pec_az: azienda.pec,
+      });
+
+      setPreviewModal({
+        isOpen: true,
+        title: `Prospetto Rimanenze al 31/12 per Studio Commerciale`,
+        filename: result.filename,
+        url: result.url,
+      });
+
+      setNotificationMsg(`✅ File "${result.filename}" generato e scaricato con successo!`);
+      setTimeout(() => setNotificationMsg(null), 8000);
+    } catch (err) {
+      console.error('Errore generazione PDF Commercialista:', err);
+      setNotificationMsg('❌ Errore durante la creazione del PDF Commercialista.');
+    } finally {
+      setIsGeneratingComm(false);
+    }
   };
 
   return (
     <div className="space-y-6">
+      {/* Notifica di download */}
+      {notificationMsg && (
+        <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-900 flex items-center justify-between shadow-xs animate-in fade-in">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+            <span>{notificationMsg}</span>
+          </div>
+          <button
+            onClick={() => setNotificationMsg(null)}
+            className="text-emerald-700 hover:text-emerald-900 p-1 rounded-lg"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Controlli Anno e Aliquota */}
       <div className="bg-white p-4 rounded-xl border border-stone-200 shadow-xs flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -133,7 +209,7 @@ export const TabReportDogane: React.FC<TabReportDoganeProps> = ({
           <select
             value={annoBilancio}
             onChange={(e) => setAnnoBilancio(parseInt(e.target.value))}
-            className="text-xs p-2 bg-stone-50 border border-stone-300 rounded-lg font-bold"
+            className="text-xs p-2 bg-stone-50 border border-stone-300 rounded-lg font-bold cursor-pointer"
           >
             <option value={2026}>Esercizio Fiscale 2026</option>
             <option value={2025}>Esercizio Fiscale 2025</option>
@@ -177,10 +253,15 @@ export const TabReportDogane: React.FC<TabReportDoganeProps> = ({
 
           <button
             onClick={handleScaricaDoganePdf}
-            className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-sm transition"
+            disabled={isGeneratingDogane}
+            className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-sm transition disabled:opacity-50 cursor-pointer"
           >
-            <Download className="w-4 h-4" />
-            <span>SCARICA BILANCIO DOGANE (PDF)</span>
+            {isGeneratingDogane ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Download className="w-4 h-4" />
+            )}
+            <span>{isGeneratingDogane ? 'GENERAZIONE IN CORSO...' : 'SCARICA BILANCIO DOGANE (PDF)'}</span>
           </button>
         </div>
 
@@ -260,10 +341,15 @@ export const TabReportDogane: React.FC<TabReportDoganeProps> = ({
 
           <button
             onClick={handleScaricaCommercialistaPdf}
-            className="flex items-center gap-2 bg-indigo-700 hover:bg-indigo-800 text-white font-bold px-4 py-2 rounded-xl text-xs shadow-sm transition"
+            disabled={isGeneratingComm}
+            className="flex items-center gap-2 bg-indigo-700 hover:bg-indigo-800 active:scale-95 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-sm transition disabled:opacity-50 cursor-pointer"
           >
-            <Download className="w-4 h-4" />
-            <span>SCARICA PROSPETTO COMMERCIALISTA (PDF)</span>
+            {isGeneratingComm ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Download className="w-4 h-4" />
+            )}
+            <span>{isGeneratingComm ? 'GENERAZIONE IN CORSO...' : 'SCARICA PROSPETTO COMMERCIALISTA (PDF)'}</span>
           </button>
         </div>
 
@@ -292,6 +378,88 @@ export const TabReportDogane: React.FC<TabReportDoganeProps> = ({
           </span>
         </div>
       </div>
+
+      {/* MODALE DI ANTEPRIMA & DOWNLOAD PDF */}
+      {previewModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 animate-in fade-in">
+          <div className="bg-white rounded-2xl shadow-2xl border border-stone-300 w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-stone-200 flex items-center justify-between bg-stone-50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-stone-900 text-base">{previewModal.title}</h3>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-xs text-stone-500 font-mono bg-stone-200/70 px-2 py-0.5 rounded-md">
+                      {previewModal.filename}
+                    </span>
+                    <span className="inline-flex items-center text-[11px] text-emerald-700 font-medium">
+                      <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Download avviato
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* Download diretto / Riprova */}
+                <a
+                  href={previewModal.url}
+                  download={previewModal.filename}
+                  className="inline-flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-xs transition"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Scarica di nuovo</span>
+                </a>
+
+                {/* Apri in nuova scheda */}
+                <a
+                  href={previewModal.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 bg-stone-200 hover:bg-stone-300 text-stone-800 font-bold text-xs px-3 py-2 rounded-xl transition"
+                  title="Apri a schermo intero"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  <span className="hidden sm:inline">Schermo intero</span>
+                </a>
+
+                {/* Chiudi */}
+                <button
+                  onClick={() => setPreviewModal(null)}
+                  className="p-2 text-stone-400 hover:text-stone-700 hover:bg-stone-200/60 rounded-xl transition cursor-pointer"
+                  title="Chiudi"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body: Embedded PDF Preview */}
+            <div className="flex-1 p-2 sm:p-4 bg-stone-100 overflow-hidden min-h-[420px] max-h-[68vh]">
+              <iframe
+                src={previewModal.url}
+                title={previewModal.title}
+                className="w-full h-full rounded-xl border border-stone-300 shadow-inner bg-white"
+              />
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 sm:p-4 bg-white border-t border-stone-200 flex items-center justify-between text-xs text-stone-500">
+              <span className="italic">
+                Il file PDF è stato generato in memoria ed esportato come Blob. Puoi visualizzarlo o salvarlo tramite il visualizzatore nativo.
+              </span>
+              <button
+                onClick={() => setPreviewModal(null)}
+                className="px-4 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 font-bold rounded-lg transition cursor-pointer"
+              >
+                Chiudi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

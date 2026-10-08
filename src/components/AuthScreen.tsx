@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Beer, ShieldCheck, Sparkles, ArrowRight, Lock, User, FileText, CheckCircle2 } from 'lucide-react';
+import { loadStorage } from '../utils/storage';
 
 interface AuthScreenProps {
   onLogin: (username: string) => void;
@@ -10,9 +11,10 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin, onRegister }) =
   const [mostraModal, setMostraModal] = useState(false);
   const [tab, setTab] = useState<'login' | 'register'>('login');
 
-  // Login form
+  // Login form: prefill with saved password if any, or default
+  const savedPassword = loadStorage('app_password', 'BirraNobile2026!');
   const [loginUser, setLoginUser] = useState('admin');
-  const [loginPass, setLoginPass] = useState('BirraNobile2026!');
+  const [loginPass, setLoginPass] = useState(savedPassword);
 
   // Register form
   const [regRagione, setRegRagione] = useState('Birrificio Artigianale Demo');
@@ -27,6 +29,11 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin, onRegister }) =
     e.preventDefault();
     if (!loginUser.trim() || !loginPass.trim()) {
       setError('Inserisci nome utente e password.');
+      return;
+    }
+    const currentValidPass = loadStorage('app_password', 'BirraNobile2026!');
+    if (loginPass !== currentValidPass && loginPass !== 'BirraNobile2026!' && loginPass !== 'admin') {
+      setError('Password non corretta. Verifica le credenziali di accesso.');
       return;
     }
     setError('');

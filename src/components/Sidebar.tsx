@@ -16,6 +16,8 @@ import {
   Scale,
   LogOut,
   ShieldCheck,
+  Settings,
+  Users,
 } from 'lucide-react';
 import { AziendaConfig } from '../types';
 
@@ -26,6 +28,7 @@ export type NavItemKey =
   | 'imballaggi'
   | 'confezionamento'
   | 'vendite'
+  | 'clienti'
   | 'cantina_iot'
   | 'fusti_pub'
   | 'bollette_costi'
@@ -49,6 +52,7 @@ export const NAV_ITEMS: NavItemConfig[] = [
   { key: 'imballaggi', label: 'Imballaggi', icon: Package },
   { key: 'confezionamento', label: 'Confezionamento', icon: Layers },
   { key: 'vendite', label: 'Vendite', icon: ShoppingCart },
+  { key: 'clienti', label: 'Anagrafica Clienti', icon: Users },
   { key: 'cantina_iot', label: 'Cantina IoT', icon: Radio },
   { key: 'fusti_pub', label: 'Fusti e Pub', icon: Beer },
   { key: 'bollette_costi', label: 'Bollette e Costi', icon: Zap },
@@ -64,6 +68,7 @@ interface SidebarProps {
   onSelectKey: (key: NavItemKey) => void;
   azienda: AziendaConfig;
   onLogout: () => void;
+  onOpenSettings?: () => void;
   pendingDeadlinesCount?: number;
 }
 
@@ -72,6 +77,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectKey,
   azienda,
   onLogout,
+  onOpenSettings,
   pendingDeadlinesCount = 0,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
@@ -182,11 +188,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </nav>
         </div>
 
-        {/* Bottom Section: User & Logout */}
-        <div className="p-2 border-t border-stone-800/80 bg-stone-900/90">
+        {/* Bottom Section: Settings & Logout */}
+        <div className="p-2 border-t border-stone-800/80 bg-stone-900/90 space-y-1">
+          {onOpenSettings && (
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className="w-full flex items-center h-10 px-2.5 rounded-xl text-xs font-medium text-stone-300 hover:text-amber-300 hover:bg-stone-800 transition group"
+              title={!isHovered ? 'Impostazioni & Profilo' : undefined}
+            >
+              <div className="w-7 flex items-center justify-center shrink-0">
+                <Settings className="w-4 h-4 text-stone-400 group-hover:text-amber-400 group-hover:rotate-45 transition-transform" />
+              </div>
+              <span
+                className={`ml-2.5 whitespace-nowrap transition-opacity duration-200 ${
+                  isHovered ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                }`}
+              >
+                Impostazioni
+              </span>
+            </button>
+          )}
+
           <button
+            type="button"
             onClick={onLogout}
-            className={`w-full flex items-center h-10 px-2.5 rounded-xl text-xs font-medium text-stone-400 hover:text-rose-400 hover:bg-rose-950/20 transition group`}
+            className="w-full flex items-center h-10 px-2.5 rounded-xl text-xs font-medium text-stone-300 hover:text-rose-400 hover:bg-rose-950/20 transition group"
             title={!isHovered ? 'Esci (Logout)' : undefined}
           >
             <div className="w-7 flex items-center justify-center shrink-0">

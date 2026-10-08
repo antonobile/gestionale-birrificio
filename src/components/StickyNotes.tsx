@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { Annotazione } from '../types';
-import { Plus, Check, RotateCcw, Trash2, Calendar, Pin } from 'lucide-react';
+import { Plus, Check, RotateCcw, Trash2, Calendar, Pin, Eye, EyeOff } from 'lucide-react';
 
 interface StickyNotesProps {
   note: Annotazione[];
   onAddNota: (nota: Omit<Annotazione, 'id' | 'created_at'>) => void;
   onToggleNota: (id: number) => void;
   onDeleteNota: (id: number) => void;
+  showPostIt?: boolean;
+  onToggleShowPostIt?: () => void;
 }
 
 const CATEGORIE_NOTE = {
@@ -24,7 +26,13 @@ export const StickyNotes: React.FC<StickyNotesProps> = ({
   onAddNota,
   onToggleNota,
   onDeleteNota,
+  showPostIt = true,
+  onToggleShowPostIt,
 }) => {
+  const [internalShow, setInternalShow] = useState(true);
+  const isVisible = showPostIt !== undefined ? showPostIt : internalShow;
+  const toggleVisibility = onToggleShowPostIt || (() => setInternalShow((prev) => !prev));
+
   const [mostraForm, setMostraForm] = useState(false);
   const [filtroCat, setFiltroCat] = useState<string>('Tutte');
   const [mostraFatte, setMostraFatte] = useState(false);
@@ -58,8 +66,37 @@ export const StickyNotes: React.FC<StickyNotesProps> = ({
     return true;
   });
 
+  // Render compatto a bacheca nascosta
+  if (!isVisible) {
+    return (
+      <div className="bg-white/80 backdrop-blur-xs p-3 sm:px-5 sm:py-3 rounded-2xl border border-amber-500/20 shadow-xs flex flex-wrap items-center justify-between gap-3 transition-all duration-300">
+        <div className="flex items-center gap-2.5">
+          <Pin className="w-4 h-4 text-amber-600" />
+          <h2 className="text-sm font-bold text-stone-800">Bacheca Post-It & Annotazioni Rapide</h2>
+          <span className="text-xs bg-amber-100 text-amber-800 font-semibold px-2 py-0.5 rounded-full">
+            {noteFiltrate.length} {noteFiltrate.length === 1 ? 'nota' : 'note'}
+          </span>
+          <span className="text-xs text-stone-400 hidden sm:inline italic">
+            (Bacheca compressa per liberare spazio)
+          </span>
+        </div>
+
+        <button
+          type="button"
+          onClick={toggleVisibility}
+          className="flex items-center gap-1.5 text-xs bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300/80 font-bold px-3 py-1.5 rounded-xl shadow-2xs transition cursor-pointer"
+          title="Mostra la bacheca dei post-it"
+          aria-label="Mostra bacheca post-it"
+        >
+          <Eye className="w-3.5 h-3.5 text-amber-700" />
+          <span>Mostra Bacheca Post-It</span>
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="bg-white/80 backdrop-blur-sm p-4 sm:p-5 rounded-2xl border border-amber-500/20 shadow-xs">
+    <div className="bg-white/80 backdrop-blur-xs p-4 sm:p-5 rounded-2xl border border-amber-500/20 shadow-xs transition-all duration-300 animate-in fade-in">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="flex items-center gap-2">
           <Pin className="w-5 h-5 text-amber-600" />
@@ -73,7 +110,7 @@ export const StickyNotes: React.FC<StickyNotesProps> = ({
           <select
             value={filtroCat}
             onChange={(e) => setFiltroCat(e.target.value)}
-            className="text-xs bg-white border border-stone-200 rounded-lg px-2.5 py-1.5 text-stone-700 shadow-2xs"
+            className="text-xs bg-white border border-stone-200 rounded-lg px-2.5 py-1.5 text-stone-700 shadow-2xs cursor-pointer"
           >
             <option value="Tutte">Tutte le categorie</option>
             {Object.keys(CATEGORIE_NOTE).map((c) => (
@@ -88,17 +125,29 @@ export const StickyNotes: React.FC<StickyNotesProps> = ({
               type="checkbox"
               checked={mostraFatte}
               onChange={(e) => setMostraFatte(e.target.checked)}
-              className="rounded border-stone-300 text-amber-600 focus:ring-amber-500"
+              className="rounded border-stone-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
             />
             <span>Completate</span>
           </label>
 
           <button
             onClick={() => setMostraForm(!mostraForm)}
-            className="flex items-center gap-1.5 text-xs bg-amber-600 hover:bg-amber-700 text-white font-medium px-3 py-1.5 rounded-lg shadow-xs transition"
+            className="flex items-center gap-1.5 text-xs bg-amber-600 hover:bg-amber-700 text-white font-medium px-3 py-1.5 rounded-lg shadow-xs transition cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Nuova Nota</span>
+          </button>
+
+          {/* Pulsante Nascondi con icona Occhio / EyeOff */}
+          <button
+            type="button"
+            onClick={toggleVisibility}
+            className="flex items-center gap-1.5 text-xs bg-stone-100 hover:bg-stone-200 text-stone-700 font-semibold px-2.5 py-1.5 rounded-lg border border-stone-200 transition cursor-pointer"
+            title="Nascondi la bacheca post-it per liberare spazio"
+            aria-label="Nascondi bacheca post-it"
+          >
+            <EyeOff className="w-3.5 h-3.5 text-stone-500" />
+            <span className="hidden sm:inline">Nascondi</span>
           </button>
         </div>
       </div>
@@ -121,7 +170,7 @@ export const StickyNotes: React.FC<StickyNotesProps> = ({
             <select
               value={categoria}
               onChange={(e) => setCategoria(e.target.value as CategoriaKey)}
-              className="text-xs p-2 rounded-lg bg-white border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              className="text-xs p-2 rounded-lg bg-white border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
             >
               {Object.keys(CATEGORIE_NOTE).map((c) => (
                 <option key={c} value={c}>
@@ -133,7 +182,7 @@ export const StickyNotes: React.FC<StickyNotesProps> = ({
               type="date"
               value={dataScadenza}
               onChange={(e) => setDataScadenza(e.target.value)}
-              className="text-xs p-2 rounded-lg bg-white border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              className="text-xs p-2 rounded-lg bg-white border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
               placeholder="Data scadenza (opzionale)"
             />
           </div>
@@ -148,13 +197,13 @@ export const StickyNotes: React.FC<StickyNotesProps> = ({
             <button
               type="button"
               onClick={() => setMostraForm(false)}
-              className="text-xs px-3 py-1.5 rounded-lg border border-stone-300 text-stone-600 hover:bg-stone-100"
+              className="text-xs px-3 py-1.5 rounded-lg border border-stone-300 text-stone-600 hover:bg-stone-100 cursor-pointer"
             >
               Annulla
             </button>
             <button
               type="submit"
-              className="text-xs px-4 py-1.5 rounded-lg bg-amber-600 text-white font-semibold hover:bg-amber-700 shadow-xs"
+              className="text-xs px-4 py-1.5 rounded-lg bg-amber-600 text-white font-semibold hover:bg-amber-700 shadow-xs cursor-pointer"
             >
               Appendi in Bacheca
             </button>
@@ -177,7 +226,7 @@ export const StickyNotes: React.FC<StickyNotesProps> = ({
               <div
                 key={n.id}
                 style={{ transform: idx % 2 === 0 ? 'rotate(-0.5deg)' : 'rotate(0.5deg)' }}
-                className={`p-3.5 rounded-lg shadow-sm border-l-4 transition hover:shadow-md flex flex-col justify-between ${
+                className={`p-3.5 rounded-lg shadow-xs border-l-4 transition hover:shadow-md flex flex-col justify-between ${
                   n.completata ? 'bg-stone-100/70 opacity-60 border-l-stone-400' : `${catInfo.bg} ${catInfo.border}`
                 }`}
               >
@@ -214,14 +263,14 @@ export const StickyNotes: React.FC<StickyNotesProps> = ({
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => onToggleNota(n.id)}
-                      className={`p-1 rounded hover:bg-black/10 transition ${n.completata ? 'text-amber-700' : 'text-emerald-700'}`}
+                      className={`p-1 rounded hover:bg-black/10 transition cursor-pointer ${n.completata ? 'text-amber-700' : 'text-emerald-700'}`}
                       title={n.completata ? 'Riapri nota' : 'Segna come completata'}
                     >
                       {n.completata ? <RotateCcw className="w-3.5 h-3.5" /> : <Check className="w-3.5 h-3.5" />}
                     </button>
                     <button
                       onClick={() => onDeleteNota(n.id)}
-                      className="p-1 rounded text-rose-600 hover:bg-rose-100/60 transition"
+                      className="p-1 rounded text-rose-600 hover:bg-rose-100/60 transition cursor-pointer"
                       title="Elimina nota"
                     >
                       <Trash2 className="w-3.5 h-3.5" />

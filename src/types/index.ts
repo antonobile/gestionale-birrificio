@@ -12,6 +12,27 @@ export interface AziendaConfig {
   piva: string;
   cf: string;
   aliquota_accisa: number; // e.g. 1.490 for -50% microbirrificio
+  indirizzo?: string;
+  email?: string;
+  telefono?: string;
+  pec?: string;
+  codice_sdi?: string;
+  contatore_mosto_iniziale?: number; // Offset contatore iniziale contalitri mosto
+}
+
+export type TipoCliente = 'B2B' | 'B2C';
+
+export interface Cliente {
+  id: number;
+  tipo_cliente?: TipoCliente; // 'B2B' (Locale / Pub) vs 'B2C' (Cliente Privato)
+  ragione_sociale: string; // Ragione sociale per B2B o Nome e Cognome per B2C
+  piva_cf?: string; // P.IVA (B2B) o Codice Fiscale (B2C)
+  indirizzo?: string;
+  telefono?: string;
+  email?: string;
+  pec?: string;
+  codice_sdi?: string;
+  note?: string;
 }
 
 export interface MateriaPrima {
@@ -100,6 +121,10 @@ export interface BirraCondizionata {
   scarto_litri?: number;
   costo_produzione_litro: number;
   documento_rif: string;
+  cliente?: string;
+  tipo_cliente?: TipoCliente;
+  stile_birra?: string;
+  prezzo_totale?: number;
 }
 
 export interface TracciamentoFusti {

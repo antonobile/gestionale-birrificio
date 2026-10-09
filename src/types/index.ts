@@ -230,3 +230,69 @@ export interface EventoAgenda {
   data_inizio: string;
   data_fine: string;
 }
+
+export interface BrewDayNota {
+  id: string;
+  orario: string;
+  testo: string;
+}
+
+export interface BrewDayLog {
+  id: number;
+  data: string;
+  codice_cotta: string;
+  ricetta_id?: number;
+  nome_birra: string;
+  stile_birra: string;
+  lotto_sfuso: string;
+  operatore: string;
+  tank_destinazione: string;
+
+  // Valori previsti (target)
+  target_litri_mosto: number;
+  target_plato: number;
+  target_preboil_litri: number;
+  target_preboil_plato: number;
+  target_mash_temp: number;
+  target_mash_durata_min: number;
+  target_boil_durata_min: number;
+  malto_totale_kg: number;
+  luppolo_totale_gr: number;
+  lievito_totale_gr: number;
+
+  // Valori reali misurati in cantina
+  reale_strike_water_temp?: number;
+  reale_mash_temp?: number;
+  reale_ph_mash?: number;
+  reale_preboil_litri?: number;
+  reale_preboil_plato?: number;
+  reale_postboil_litri?: number;
+  reale_og_plato?: number;
+  reale_temp_whirlpool?: number;
+  reale_temp_raffreddamento?: number;
+  reale_ph_mosto_freddo?: number;
+  reale_contalitri_inizio?: number;
+  reale_contalitri_fine?: number;
+
+  // Scostamenti calcolati
+  scostamento_litri?: number;
+  scostamento_litri_perc?: number;
+  scostamento_plato?: number;
+  scostamento_plato_perc?: number;
+  efficienza_teorica_perc?: number;
+  efficienza_reale_perc?: number;
+  scostamento_efficienza?: number;
+  evaporazione_oraria_litri?: number;
+  suggerimento_calibrazione?: string;
+
+  // Annotazioni
+  annotazioni_libere: string;
+  annotazioni_orarie: BrewDayNota[];
+
+  // Avanzamento
+  step_attivo: number;
+  step_completati: string[];
+  stato: 'IN_CORSO' | 'COMPLETATA' | 'ANNULLATA';
+  ora_inizio?: string;
+  ora_fine?: string;
+}

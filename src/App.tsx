@@ -15,6 +15,7 @@ import {
   PromemoriaScadenza,
   PianificazioneCotta,
   EventoAgenda,
+  BrewDayLog,
 } from './types';
 import {
   initialAzienda,
@@ -32,6 +33,7 @@ import {
   initialPromemoria,
   initialPiani,
   initialEventiAgenda,
+  initialBrewDayLogs,
 } from './data/mockData';
 import { loadStorage, saveStorage } from './utils/storage';
 import { Header } from './components/Header';
@@ -45,6 +47,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { TabAcquisti } from './components/tabs/TabAcquisti';
 import { TabPianificatore } from './components/tabs/TabPianificatore';
 import { TabCotta } from './components/tabs/TabCotta';
+import { TabBrewDayLog } from './components/tabs/TabBrewDayLog';
 import { TabImballaggi } from './components/tabs/TabImballaggi';
 import { TabConfezionamento } from './components/tabs/TabConfezionamento';
 import { TabVendite } from './components/tabs/TabVendite';
@@ -99,6 +102,10 @@ export const App: React.FC = () => {
   const [eventiAgenda, setEventiAgenda] = useState<EventoAgenda[]>(() =>
     loadStorage('eventi_agenda', initialEventiAgenda)
   );
+  const [brewDayLogs, setBrewDayLogs] = useState<BrewDayLog[]>(() =>
+    loadStorage('brew_day_logs', initialBrewDayLogs)
+  );
+  const [selectedRecipeForBrew, setSelectedRecipeForBrew] = useState<number | undefined>(undefined);
 
   // Active navigation key based on the strict 14 order requested:
   // 1. acquisti xml
@@ -152,6 +159,7 @@ export const App: React.FC = () => {
     saveStorage('promemoria', promemoria);
     saveStorage('piani', piani);
     saveStorage('eventi_agenda', eventiAgenda);
+    saveStorage('brew_day_logs', brewDayLogs);
     saveStorage('show_dashboard_kpis', showDashboard);
     saveStorage('show_post_it', showPostIt);
   }, [
@@ -172,6 +180,7 @@ export const App: React.FC = () => {
     promemoria,
     piani,
     eventiAgenda,
+    brewDayLogs,
     showDashboard,
     showPostIt,
   ]);
@@ -271,6 +280,7 @@ export const App: React.FC = () => {
                   onNavigateToFusti={() => setActiveKey('fusti_pub')}
                   onOpenCalibrazione={() => setIsSettingsOpen(true)}
                   offsetMosto={offsetMostoIniziale}
+                  onNavigateToBrewDay={() => setActiveKey('cotta_guidata')}
                 />
               </div>
             )}
@@ -312,6 +322,10 @@ export const App: React.FC = () => {
                     setPiani(piani.map((p) => (p.id === id ? { ...p, stato: st } : p)));
                   }}
                   onDeletePiano={(id) => setPiani(piani.filter((p) => p.id !== id))}
+                  onAvviaCottaGuidata={(rId) => {
+                    setSelectedRecipeForBrew(rId);
+                    setActiveKey('cotta_guidata');
+                  }}
                 />
               )}
 
@@ -356,6 +370,53 @@ export const App: React.FC = () => {
                   }}
                   onAddRicetta={(r) => setRicette([{ id: Date.now(), ...r }, ...ricette])}
                   onDeleteRicetta={(id) => setRicette(ricette.filter((r) => r.id !== id))}
+                  onAvviaCottaGuidata={(rId) => {
+                    setSelectedRecipeForBrew(rId);
+                    setActiveKey('cotta_guidata');
+                  }}
+                />
+              )}
+
+              {/* 3b. Modalità Cotta Guidata (Brew Day Log su Tablet) */}
+              {activeKey === 'cotta_guidata' && (
+                <TabBrewDayLog
+                  ricette={ricette}
+                  cotte={cotte}
+                  tanks={fermentatori}
+                  azienda={azienda}
+                  brewDayLogs={brewDayLogs}
+                  onSaveBrewDayLog={(log) => {
+                    const exists = brewDayLogs.some((l) => l.id === log.id);
+                    if (exists) {
+                      setBrewDayLogs(brewDayLogs.map((l) => (l.id === log.id ? log : l)));
+                    } else {
+                      setBrewDayLogs([log, ...brewDayLogs]);
+                    }
+                  }}
+                  onRiversaInCotte={(c) => {
+                    setCotte([{ id: Date.now(), ...c }, ...cotte]);
+                    if (c.malto_usato_kg > 0 || c.luppolo_usato_kg > 0 || c.lievito_usato_kg > 0) {
+                      setMateriePrime([
+                        {
+                          id: Date.now() + 1,
+                          tipo: 'SCARICO',
+                          data: c.data,
+                          riferimento: `Cotta ${c.cotta_num}`,
+                          azienda: `Produzione ${c.tipo_birra}`,
+                          malto_kg: c.malto_usato_kg,
+                          luppolo_kg: c.luppolo_usato_kg,
+                          lievito_kg: c.lievito_usato_kg,
+                          costo_malto_kg: 1.35,
+                          costo_luppolo_kg: 28.5,
+                          costo_lievito_kg: 64.0,
+                          costo_kg_medio: 1.35,
+                        },
+                        ...materiePrime,
+                      ]);
+                    }
+                  }}
+                  onNavigateToCotte={() => setActiveKey('cotta_cip')}
+                  initialRecipeId={selectedRecipeForBrew}
                 />
               )}
 

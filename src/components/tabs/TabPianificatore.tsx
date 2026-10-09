@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { PianificazioneCotta, FermentatoreConfig, Ricetta } from '../../types';
 import { generateIcs, downloadIcsFile, getGoogleCalendarUrl } from '../../utils/calendar';
-import { CalendarRange, Plus, AlertTriangle, CheckCircle, Trash2, Calendar } from 'lucide-react';
+import { CalendarRange, Plus, AlertTriangle, CheckCircle, Trash2, Calendar, Flame } from 'lucide-react';
 
 interface TabPianificatoreProps {
   piani: PianificazioneCotta[];
@@ -10,6 +10,7 @@ interface TabPianificatoreProps {
   onAddPiano: (piano: Omit<PianificazioneCotta, 'id'>) => void;
   onUpdateStatoPiano: (id: number, stato: PianificazioneCotta['stato']) => void;
   onDeletePiano: (id: number) => void;
+  onAvviaCottaGuidata?: (ricettaId?: number) => void;
 }
 
 export const TabPianificatore: React.FC<TabPianificatoreProps> = ({
@@ -19,6 +20,7 @@ export const TabPianificatore: React.FC<TabPianificatoreProps> = ({
   onAddPiano,
   onUpdateStatoPiano,
   onDeletePiano,
+  onAvviaCottaGuidata,
 }) => {
   const [mostraForm, setMostraForm] = useState(false);
 
@@ -355,6 +357,20 @@ export const TabPianificatore: React.FC<TabPianificatoreProps> = ({
                       </td>
                       <td className="p-2.5 text-center">
                         <div className="flex items-center justify-center gap-1">
+                          {onAvviaCottaGuidata && (
+                            <button
+                              onClick={() => {
+                                const matchedRicetta = ricette.find((r) =>
+                                  p.nome_birra.toLowerCase().includes(r.nome_ricetta.toLowerCase())
+                                );
+                                onAvviaCottaGuidata(matchedRicetta?.id);
+                              }}
+                              className="p-1 rounded text-amber-600 hover:text-amber-800 hover:bg-amber-100 transition"
+                              title="Avvia Foglio Cotta (Brew Day Log)"
+                            >
+                              <Flame className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
                             onClick={() => handleScaricaIcs(p)}
                             className="p-1 rounded text-stone-400 hover:text-amber-700"

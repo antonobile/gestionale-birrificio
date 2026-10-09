@@ -1,5 +1,5 @@
 import React from 'react';
-import { Droplet, Beer, Truck, Wheat, Flower2, FlaskConical, Warehouse, Gauge } from 'lucide-react';
+import { Droplet, Beer, Truck, Wheat, Flower2, FlaskConical, Warehouse, Gauge, Flame } from 'lucide-react';
 
 interface MetricCardsProps {
   totMostoLordo: number;
@@ -12,6 +12,7 @@ interface MetricCardsProps {
   onNavigateToFusti?: () => void;
   onOpenCalibrazione?: () => void;
   offsetMosto?: number;
+  onNavigateToBrewDay?: () => void;
 }
 
 export const MetricCards: React.FC<MetricCardsProps> = ({
@@ -25,6 +26,7 @@ export const MetricCards: React.FC<MetricCardsProps> = ({
   onNavigateToFusti,
   onOpenCalibrazione,
   offsetMosto = 0,
+  onNavigateToBrewDay,
 }) => {
   return (
     <div className="space-y-4">
@@ -35,6 +37,17 @@ export const MetricCards: React.FC<MetricCardsProps> = ({
           <div className="flex items-center justify-between text-stone-500 mb-1.5">
             <span className="text-xs font-bold uppercase tracking-wider text-stone-600">Contalitri Mosto Lordo</span>
             <div className="flex items-center gap-1.5">
+              {onNavigateToBrewDay && (
+                <button
+                  type="button"
+                  onClick={onNavigateToBrewDay}
+                  className="px-2 py-0.5 rounded-lg bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white text-[10px] font-bold flex items-center gap-1 transition shadow-xs"
+                  title="Avvia Foglio di Lavoro Cotta (Brew Day Log su tablet)"
+                >
+                  <Flame className="w-3 h-3 text-amber-200" />
+                  <span>Brew Day</span>
+                </button>
+              )}
               {onOpenCalibrazione && (
                 <button
                   type="button"

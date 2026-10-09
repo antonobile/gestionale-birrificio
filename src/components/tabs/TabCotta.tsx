@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Cotta, Ricetta, AziendaConfig, IngredienteAggiuntivo } from '../../types';
-import { Plus, BookOpen, Trash2, Edit3, Sparkles, Check, Droplets } from 'lucide-react';
+import { Plus, BookOpen, Trash2, Edit3, Sparkles, Check, Droplets, Flame, Tablet } from 'lucide-react';
 
 interface TabCottaProps {
   cotte: Cotta[];
@@ -10,6 +10,7 @@ interface TabCottaProps {
   onDeleteCotta: (id: number) => void;
   onAddRicetta: (ricetta: Omit<Ricetta, 'id'>) => void;
   onDeleteRicetta: (id: number) => void;
+  onAvviaCottaGuidata?: (ricettaId?: number) => void;
 }
 
 export const TabCotta: React.FC<TabCottaProps> = ({
@@ -20,6 +21,7 @@ export const TabCotta: React.FC<TabCottaProps> = ({
   onDeleteCotta,
   onAddRicetta,
   onDeleteRicetta,
+  onAvviaCottaGuidata,
 }) => {
   const [sezione, setSezione] = useState<'nuova_cotta' | 'ricette' | 'storico'>('nuova_cotta');
 
@@ -145,42 +147,83 @@ export const TabCotta: React.FC<TabCottaProps> = ({
   return (
     <div className="space-y-6">
       {/* Sub-navigation tabs */}
-      <div className="flex border-b border-stone-200">
-        <button
-          onClick={() => setSezione('nuova_cotta')}
-          className={`px-4 py-2.5 text-xs sm:text-sm font-bold border-b-2 flex items-center gap-2 transition ${
-            sezione === 'nuova_cotta'
-              ? 'border-amber-600 text-amber-900 bg-amber-50/50'
-              : 'border-transparent text-stone-500 hover:text-stone-800'
-          }`}
-        >
-          <Plus className="w-4 h-4" />
-          <span>Registra Cotta in Sala Cottura</span>
-        </button>
+      <div className="flex flex-wrap items-center justify-between border-b border-stone-200 gap-2">
+        <div className="flex border-b sm:border-b-0 border-stone-200">
+          <button
+            onClick={() => setSezione('nuova_cotta')}
+            className={`px-4 py-2.5 text-xs sm:text-sm font-bold border-b-2 flex items-center gap-2 transition ${
+              sezione === 'nuova_cotta'
+                ? 'border-amber-600 text-amber-900 bg-amber-50/50'
+                : 'border-transparent text-stone-500 hover:text-stone-800'
+            }`}
+          >
+            <Plus className="w-4 h-4" />
+            <span>Registra Cotta in Sala Cottura</span>
+          </button>
 
-        <button
-          onClick={() => setSezione('ricette')}
-          className={`px-4 py-2.5 text-xs sm:text-sm font-bold border-b-2 flex items-center gap-2 transition ${
-            sezione === 'ricette'
-              ? 'border-amber-600 text-amber-900 bg-amber-50/50'
-              : 'border-transparent text-stone-500 hover:text-stone-800'
-          }`}
-        >
-          <BookOpen className="w-4 h-4" />
-          <span>Ricettario & Stili ({ricette.length})</span>
-        </button>
+          <button
+            onClick={() => setSezione('ricette')}
+            className={`px-4 py-2.5 text-xs sm:text-sm font-bold border-b-2 flex items-center gap-2 transition ${
+              sezione === 'ricette'
+                ? 'border-amber-600 text-amber-900 bg-amber-50/50'
+                : 'border-transparent text-stone-500 hover:text-stone-800'
+            }`}
+          >
+            <BookOpen className="w-4 h-4" />
+            <span>Ricettario & Stili ({ricette.length})</span>
+          </button>
 
-        <button
-          onClick={() => setSezione('storico')}
-          className={`px-4 py-2.5 text-xs sm:text-sm font-bold border-b-2 flex items-center gap-2 transition ${
-            sezione === 'storico'
-              ? 'border-amber-600 text-amber-900 bg-amber-50/50'
-              : 'border-transparent text-stone-500 hover:text-stone-800'
-          }`}
-        >
-          <span>Registro Mosto Allegato I ({cotte.length})</span>
-        </button>
+          <button
+            onClick={() => setSezione('storico')}
+            className={`px-4 py-2.5 text-xs sm:text-sm font-bold border-b-2 flex items-center gap-2 transition ${
+              sezione === 'storico'
+                ? 'border-amber-600 text-amber-900 bg-amber-50/50'
+                : 'border-transparent text-stone-500 hover:text-stone-800'
+            }`}
+          >
+            <span>Registro Mosto Allegato I ({cotte.length})</span>
+          </button>
+        </div>
+
+        {onAvviaCottaGuidata && (
+          <button
+            type="button"
+            onClick={() => onAvviaCottaGuidata()}
+            className="mb-1 px-4 py-2 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-md shadow-amber-900/20 transition active:scale-95"
+          >
+            <Flame className="w-4 h-4 text-amber-300 animate-pulse" />
+            <span>Apri Modalità Cotta Guidata (Tablet Brew Day)</span>
+          </button>
+        )}
       </div>
+
+      {/* Banner Rapido Modalità Guidata */}
+      {onAvviaCottaGuidata && sezione === 'nuova_cotta' && (
+        <div className="bg-gradient-to-r from-stone-900 via-stone-800 to-amber-950 p-4 rounded-2xl border border-stone-800 text-stone-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
+              <Tablet className="w-5 h-5 text-amber-400" />
+            </div>
+            <div>
+              <div className="font-extrabold text-sm text-white flex items-center gap-2">
+                Sei in sala cottura con un Tablet?
+                <span className="text-[10px] bg-amber-500 text-stone-950 font-bold px-1.5 py-0.2 rounded">TOUCH READY</span>
+              </div>
+              <p className="text-xs text-stone-300">
+                Usa il Foglio di Lavoro interattivo passo-passo con timer automatici, check-list, calcolo scostamenti e annotazioni al volo.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => onAvviaCottaGuidata()}
+            className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs flex items-center gap-1.5 transition shrink-0 active:scale-95 shadow-sm"
+          >
+            <Flame className="w-4 h-4 fill-current" />
+            <span>Avvia Foglio Cotta (Brew Day)</span>
+          </button>
+        </div>
+      )}
 
       {/* SEZIONE 1: REGISTRA NUOVA COTTA */}
       {sezione === 'nuova_cotta' && (
@@ -572,13 +615,25 @@ export const TabCotta: React.FC<TabCottaProps> = ({
                   <div>Fermentabili: <span className="font-semibold">{r.fermentabili_kg} kg</span> | Luppoli: <span className="font-semibold">{r.luppoli_gr} g</span></div>
                   {r.note && <div className="text-[11px] text-stone-500 italic mt-1">{r.note}</div>}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleApplicaRicetta(r)}
-                  className="w-full mt-2 text-xs bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold py-1.5 rounded-lg border border-amber-200"
-                >
-                  Carica in Sala Cottura
-                </button>
+                <div className="grid grid-cols-2 gap-1.5 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => handleApplicaRicetta(r)}
+                    className="text-xs bg-stone-100 hover:bg-stone-200 text-stone-800 font-bold py-1.5 rounded-lg border border-stone-200 text-center"
+                  >
+                    Carica Dati
+                  </button>
+                  {onAvviaCottaGuidata && (
+                    <button
+                      type="button"
+                      onClick={() => onAvviaCottaGuidata(r.id)}
+                      className="text-xs bg-amber-600 hover:bg-amber-700 text-white font-bold py-1.5 rounded-lg shadow-2xs flex items-center justify-center gap-1"
+                    >
+                      <Flame className="w-3.5 h-3.5" />
+                      <span>Cotta Guidata</span>
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>

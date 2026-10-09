@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Settings,
   Users,
+  Flame,
 } from 'lucide-react';
 import { AziendaConfig } from '../types';
 
@@ -25,6 +26,7 @@ export type NavItemKey =
   | 'acquisti_xml'
   | 'pianifica_cotta'
   | 'cotta_cip'
+  | 'cotta_guidata'
   | 'imballaggi'
   | 'confezionamento'
   | 'vendite'
@@ -49,6 +51,7 @@ export const NAV_ITEMS: NavItemConfig[] = [
   { key: 'acquisti_xml', label: 'Acquisti XML', icon: FileSpreadsheet },
   { key: 'pianifica_cotta', label: 'Pianifica Cotta', icon: CalendarRange },
   { key: 'cotta_cip', label: 'Cotta e CIP', icon: FlaskConical },
+  { key: 'cotta_guidata', label: 'Foglio Cotta (Brew Day)', icon: Flame },
   { key: 'imballaggi', label: 'Imballaggi', icon: Package },
   { key: 'confezionamento', label: 'Confezionamento', icon: Layers },
   { key: 'vendite', label: 'Vendite', icon: ShoppingCart },
